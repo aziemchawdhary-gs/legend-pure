@@ -26,5 +26,10 @@
       "appenders": [
       ]
     }
+  },
+  "sourceLocationConfiguration" : {
+    "welcomeFileDirectory" : "/home/aziem/pure",
+    "coreFilesLocation" : "/home/aziem/pure/legend-pure/legend-pure-code-compiled-core/src/main/resources/core",
+    "ideFilesLocation" : "/home/aziem/pure/legend-pure/legend-pure-ide-light/src/main/resources/pure_ide"
   }
 }
