@@ -1,0 +1,6 @@
+{
+  "dependencies": {
+    "@finos/legend-server-sdlc": "^1.0.0",
+    "yarn": "^1.22.18"
+  }
+}

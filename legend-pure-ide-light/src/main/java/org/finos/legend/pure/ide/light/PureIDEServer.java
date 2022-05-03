@@ -93,6 +93,7 @@ public class PureIDEServer extends Application<ServerConfiguration>
         environment.jersey().register(new Activities(pureSession));
         environment.jersey().register(new FileManagement(pureSession));
         environment.jersey().register(new LifeCycle(pureSession));
+        environment.jersey().register(new RuntimeOptions(pureSession));
 
         enableCors(environment);
     }
