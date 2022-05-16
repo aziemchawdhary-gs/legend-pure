@@ -278,7 +278,7 @@ public class GraphLoader
 
     private void loadDeserializationResults(ListIterable<SourceDeserializationResult> results, Message message)
     {
-        ListIterable<DeserializationNode> nodes = LazyIterate.select(results, SourceDeserializationResult.HAS_NODES).flatCollect(SourceDeserializationResult.GET_NODES).toList();
+        ListIterable<DeserializationNode> nodes = LazyIterate.select(results, SourceDeserializationResult::hasDeserializationNodes).flatCollect(SourceDeserializationResult::getDeserializationNodes).toList();
         initializeNodes(nodes, message);
         resolveReferences(nodes, message);
 
@@ -719,9 +719,7 @@ public class GraphLoader
                 SourceInformation sourceInfo = instance.getSourceInformation();
                 if (sourceInfo != null)
                 {
-                    errorMessage.append(" (");
-                    sourceInfo.writeMessage(errorMessage);
-                    errorMessage.append(')');
+                    sourceInfo.appendMessage(errorMessage.append(" (")).append(')');
                 }
                 throw new RuntimeException(errorMessage.toString(), e);
             }

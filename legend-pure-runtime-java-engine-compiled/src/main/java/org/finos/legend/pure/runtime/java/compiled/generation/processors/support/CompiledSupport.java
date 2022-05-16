@@ -2047,8 +2047,9 @@ public class CompiledSupport
 
     private static String getEnumClassifierName(Enum obj)
     {
-        String[] classifierIdSplitted = obj.getFullSystemPath().split("::");
-        return classifierIdSplitted[classifierIdSplitted.length - 1];
+        String classifierPath = obj.getFullSystemPath();
+        int index = classifierPath.lastIndexOf(':');
+        return classifierPath.substring(index + 1);
     }
 
     private static String getPureGeneratedClassName(Object obj)
@@ -2366,12 +2367,9 @@ public class CompiledSupport
             SourceInformation valueSpecSourceInfo = valueSpecification.getSourceInformation();
             if (valueSpecSourceInfo != null)
             {
-                message.append(" (from ");
-                valueSpecSourceInfo.writeMessage(message);
-                message.append(')');
+                valueSpecSourceInfo.appendMessage(message.append(" (from ")).append(')');
             }
-            message.append("; error compiling generated Java code:\n");
-            message.append(_class);
+            message.append("; error compiling generated Java code:\n").append(_class);
             throw new RuntimeException(message.toString(), e);
         }
 
@@ -2387,15 +2385,12 @@ public class CompiledSupport
             SourceInformation valueSpecSourceInfo = valueSpecification.getSourceInformation();
             if (valueSpecSourceInfo != null)
             {
-                message.append(" (from ");
-                valueSpecSourceInfo.writeMessage(message);
-                message.append(')');
+                valueSpecSourceInfo.appendMessage(message.append(" (from ")).append(')');
             }
             String errorMessage = e.getMessage();
             if (errorMessage != null)
             {
-                message.append(": ");
-                message.append(errorMessage);
+                message.append(": ").append(errorMessage);
             }
             throw new RuntimeException(message.toString(), e);
         }
@@ -2908,7 +2903,7 @@ public class CompiledSupport
                 Class<?> clazz = ((CompiledExecutionSupport)es).getClassLoader().loadClass(JavaPackageAndImportBuilder.rootPackage() + '.' + uniqueFunctionId);
                 String functionName = FunctionProcessor.functionNameToJava(functionDefinition);
                 Method method = getFunctionMethod(clazz, functionName, functionDefinition, paramClasses, params, es);
-                return new JavaMethodWithParamsSharedPureFunction(method, paramClasses, functionDefinition.getSourceInformation());
+                return new JavaMethodWithParamsSharedPureFunction<>(method, paramClasses, functionDefinition.getSourceInformation());
             }
             catch (ClassNotFoundException e)
             {
@@ -3033,12 +3028,15 @@ public class CompiledSupport
         return (sourceCollection == null) ? Lists.immutable.empty() : sourceCollection.collect(sourceObject -> castWithExceptionHandling(sourceObject, targetType, sourceInformation));
     }
 
+    @SuppressWarnings("unchecked")
     public static <T> T castWithExceptionHandling(Object sourceObject, Class<?> targetType, SourceInformation sourceInformation)
     {
         if (sourceObject != null && !targetType.isInstance(sourceObject))
         {
-            String[] castTypeClassName = targetType.getSimpleName().split("_");
-            String errorMessage = "Cast exception: " + getPureClassName(sourceObject) + " cannot be cast to " + castTypeClassName[castTypeClassName.length - 1];
+            String targetSimpleName = targetType.getSimpleName();
+            String castTypeClassName = targetSimpleName.substring(targetSimpleName.lastIndexOf('_') + 1);
+
+            String errorMessage = "Cast exception: " + getPureClassName(sourceObject) + " cannot be cast to " + castTypeClassName;
             throw new PureExecutionException(sourceInformation, errorMessage);
         }
         return (T)sourceObject;

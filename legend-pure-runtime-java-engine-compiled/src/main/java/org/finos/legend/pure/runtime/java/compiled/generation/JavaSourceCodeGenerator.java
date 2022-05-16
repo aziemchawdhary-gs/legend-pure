@@ -182,34 +182,33 @@ public final class JavaSourceCodeGenerator
 
     ListIterable<StringJavaSource> generateCode(Source source)
     {
-        if (source.getNewInstances() != null)
+        if (source.getNewInstances() == null)
         {
-            try
-            {
-                ProcessorContext processorContext = new ProcessorContext(this.processorSupport, this.extensions, this.idBuilder, this.includePureStackTrace);
-
-                for (CoreInstance coreInstance : source.getNewInstances())
-                {
-                    if (!Instance.instanceOf(coreInstance, M3Paths.Package, this.processorSupport))
-                    {
-                        this.toJava(coreInstance, processorContext);
-                    }
-                }
-
-                MutableList<StringJavaSource> javaClasses = this.buildJavaClasses(processorContext);
-                if (this.writeFilesToDisk)
-                {
-                    this.javaClassesToDisk(javaClasses);
-                }
-
-                return javaClasses;
-            }
-            catch (Throwable t)
-            {
-                throw new RuntimeException("Error generating Java code for " + source.getId(), t);
-            }
+            return Lists.fixedSize.empty();
         }
-        return Lists.fixedSize.empty();
+        try
+        {
+            ProcessorContext processorContext = new ProcessorContext(this.processorSupport, this.extensions, this.idBuilder, this.includePureStackTrace);
+            source.getNewInstances().forEach(coreInstance ->
+            {
+                if (!Instance.instanceOf(coreInstance, M3Paths.Package, this.processorSupport))
+                {
+                    this.toJava(coreInstance, processorContext);
+                }
+            });
+
+            MutableList<StringJavaSource> javaClasses = buildJavaClasses(processorContext);
+            if (this.writeFilesToDisk)
+            {
+                this.javaClassesToDisk(javaClasses);
+            }
+
+            return javaClasses;
+        }
+        catch (Throwable t)
+        {
+            throw new RuntimeException("Error generating Java code for " + source.getId(), t);
+        }
     }
 
     ListIterable<StringJavaSource> generateCode()
@@ -249,36 +248,31 @@ public final class JavaSourceCodeGenerator
 
     void collectClassesToSerialize()
     {
-        CoreInstance externalizableStereotype = AccessLevel.EXTERNALIZABLE.getStereotype(this.processorSupport);
-        ProcessorContext processorContext = new ProcessorContext(this.processorSupport, this.extensions, this.idBuilder, this.includePureStackTrace);
-        ProcessorSupport processorSupport = processorContext.getSupport();
-
-        for (CoreInstance element : externalizableStereotype.getValueForMetaPropertyToMany(M3Properties.modelElements))
+        AccessLevel.EXTERNALIZABLE.getStereotype(this.processorSupport).getValueForMetaPropertyToMany(M3Properties.modelElements).forEach(element ->
         {
             if (Instance.instanceOf(element, M3Paths.Function, this.processorSupport))
             {
-                CoreInstance functionType = processorSupport.function_getFunctionType(element);
-                ListIterable<? extends CoreInstance> parameters = functionType.getValueForMetaPropertyToMany(M3Properties.parameters);
-                for (CoreInstance parameter : parameters)
+                CoreInstance functionType = this.processorSupport.function_getFunctionType(element);
+                functionType.getValueForMetaPropertyToMany(M3Properties.parameters).forEach(parameter ->
                 {
-                    CoreInstance type = Instance.getValueForMetaPropertyToOneResolved(parameter, M3Properties.genericType, processorSupport);
-                    CoreInstance rawType = Instance.getValueForMetaPropertyToOneResolved(type, M3Properties.rawType, processorSupport);
+                    CoreInstance type = Instance.getValueForMetaPropertyToOneResolved(parameter, M3Properties.genericType, this.processorSupport);
+                    CoreInstance rawType = Instance.getValueForMetaPropertyToOneResolved(type, M3Properties.rawType, this.processorSupport);
                     if (M3Paths.Map.equals(PackageableElement.getUserPathForPackageableElement(rawType)))
                     {
-                        CoreInstance mapKey = Instance.getValueForMetaPropertyToOneResolved(Instance.getValueForMetaPropertyToManyResolved(type, M3Properties.typeArguments, processorSupport).get(0), M3Properties.rawType, processorSupport);
+                        CoreInstance mapKey = Instance.getValueForMetaPropertyToOneResolved(Instance.getValueForMetaPropertyToManyResolved(type, M3Properties.typeArguments, this.processorSupport).get(0), M3Properties.rawType, this.processorSupport);
                         if (Instance.instanceOf(mapKey, M3Paths.Class, this.processorSupport))
                         {
                             this.addClassToSerialize(mapKey, this.javaSerializedClasses);
                         }
-                        CoreInstance mapValue = Instance.getValueForMetaPropertyToOneResolved(Instance.getValueForMetaPropertyToManyResolved(type, M3Properties.typeArguments, processorSupport).get(1), M3Properties.rawType, processorSupport);
+                        CoreInstance mapValue = Instance.getValueForMetaPropertyToOneResolved(Instance.getValueForMetaPropertyToManyResolved(type, M3Properties.typeArguments, this.processorSupport).get(1), M3Properties.rawType, this.processorSupport);
                         if (Instance.instanceOf(mapValue, M3Paths.Class, this.processorSupport))
                         {
                             this.addClassToSerialize(mapValue, this.javaSerializedClasses);
                         }
                     }
-                }
+                });
             }
-        }
+        });
     }
 
     private void addClassToSerialize(CoreInstance coreInstanceClass, MutableSet<CoreInstance> set)
@@ -330,18 +324,16 @@ public final class JavaSourceCodeGenerator
 
     ListIterable<StringJavaSource> generateExternalizableAPI(String pack)
     {
-        CoreInstance externalizableStereotype = AccessLevel.EXTERNALIZABLE.getStereotype(this.processorSupport);
-
         MutableList<String> externalizableFunctionCode = Lists.mutable.empty();
         CoreInstance functionClass = this.processorSupport.package_getByUserPath(M3Paths.Function);
         ProcessorContext processorContext = new ProcessorContext(this.processorSupport, this.extensions, this.idBuilder, this.includePureStackTrace);
-        for (CoreInstance element : externalizableStereotype.getValueForMetaPropertyToMany(M3Properties.modelElements))
+        AccessLevel.EXTERNALIZABLE.getStereotype(this.processorSupport).getValueForMetaPropertyToMany(M3Properties.modelElements).forEach(element ->
         {
             if (Instance.instanceOf(element, functionClass, this.processorSupport))
             {
                 externalizableFunctionCode.add(FunctionProcessor.buildExternalizableFunction(element, processorContext));
             }
-        }
+        });
         String text = this.buildExternalizableFunctionClass(externalizableFunctionCode);
         return Lists.immutable.with(StringJavaSource.newStringJavaSource(pack, EXTERNAL_FUNCTIONS_CLASS_NAME, text));
     }
@@ -562,7 +554,7 @@ public final class JavaSourceCodeGenerator
                 {
                     CoreInstance functionType = this.processorSupport.function_getFunctionType(coreInstance);
                     CoreInstance unresolvedReturnType = Instance.getValueForMetaPropertyToOneResolved(functionType, M3Properties.returnType, this.processorSupport);
-                    CoreInstance returnType = GenericType.isGenericTypeConcrete(unresolvedReturnType, this.processorSupport) ? unresolvedReturnType : Type.wrapGenericType(this.processorSupport.package_getByUserPath(M3Paths.Any), this.processorSupport);
+                    CoreInstance returnType = GenericType.isGenericTypeConcrete(unresolvedReturnType) ? unresolvedReturnType : Type.wrapGenericType(this.processorSupport.package_getByUserPath(M3Paths.Any), this.processorSupport);
                     String name = Instance.getValueForMetaPropertyToOneResolved(coreInstance, M3Properties.name, this.processorSupport).getName();
                     CoreInstance multiplicity = Instance.getValueForMetaPropertyToOneResolved(coreInstance, M3Properties.multiplicity, this.processorSupport);
                     return buildDelegationReadProperty(coreInstance, "LambdaFunction", "this.lambdaFunction", "", name, returnType, unresolvedReturnType, multiplicity, this.processorSupport, processorContext);
@@ -580,7 +572,7 @@ public final class JavaSourceCodeGenerator
     {
         CoreInstance rawType = Instance.getValueForMetaPropertyToOneResolved(returnType, M3Properties.rawType, processorSupport);
         boolean isPrimitive = rawType != null && Instance.instanceOf(rawType, M3Paths.PrimitiveType, processorSupport);
-        boolean makePrimitiveIfPossible = GenericType.isGenericTypeConcrete(unresolvedReturnType, processorSupport) && Multiplicity.isToOne(multiplicity, true);
+        boolean makePrimitiveIfPossible = GenericType.isGenericTypeConcrete(unresolvedReturnType) && Multiplicity.isToOne(multiplicity, true);
         String typePrimitive = TypeProcessor.pureTypeToJava(returnType, true, makePrimitiveIfPossible, processorSupport);
         String typeObject = TypeProcessor.pureTypeToJava(returnType, true, false, processorSupport);
 
@@ -686,33 +678,33 @@ public final class JavaSourceCodeGenerator
 
     private static String toFactoryRegistryEntry(CoreInstance _class, ProcessorSupport processorSupport)
     {
-        String systemPath = PackageableElement.getUserObjectPathForPackageableElementAsList(_class, false).makeString("::");
+        String path = PackageableElement.getUserPathForPackageableElement(_class);
         String factory = ClassProcessor.requiresCompilationImpl(processorSupport, _class) ? JavaPackageAndImportBuilder.buildImplClassReferenceFromType(_class, ClassImplIncrementalCompilationProcessor.CLASS_IMPL_SUFFIX) :
                 M3ToJavaGenerator.getFullyQualifiedM3ImplForCompiledModel(_class);
         String factoryInterface = M3ToJavaGenerator.getFullyQualifiedM3InterfaceForCompiledModel(_class);
-        return "\t\tinterfaceByPath.put(\"" + systemPath + "\", " + factoryInterface + ".class);\n" +
-                "\t\ttypeFactoriesByPath.put(\"" + systemPath + "\", " + factory + ".FACTORY);\n";
+        return "\t\tinterfaceByPath.put(\"" + path + "\", " + factoryInterface + ".class);\n" +
+                "\t\ttypeFactoriesByPath.put(\"" + path + "\", " + factory + ".FACTORY);\n";
     }
 
     private static String toEnumFactoryRegistryEntry(CoreInstance _enum)
     {
-        String systemPath = PackageableElement.getUserObjectPathForPackageableElementAsList(_enum, false).makeString("::");
-        return "\t\tinterfaceByPath.put(\"" + systemPath + "\", org.finos.legend.pure.m3.coreinstance.meta.pure.metamodel.type.Enum.class);\n" +
-                "\t\ttypeFactoriesByPath.put(\"" + systemPath + "\", org.finos.legend.pure.m3.coreinstance.meta.pure.metamodel.type.EnumInstance.FACTORY);\n";
+        String path = PackageableElement.getUserPathForPackageableElement(_enum);
+        return "\t\tinterfaceByPath.put(\"" + path + "\", org.finos.legend.pure.m3.coreinstance.meta.pure.metamodel.type.Enum.class);\n" +
+                "\t\ttypeFactoriesByPath.put(\"" + path + "\", org.finos.legend.pure.m3.coreinstance.meta.pure.metamodel.type.EnumInstance.FACTORY);\n";
     }
 
     private static String toMeasureFactoryRegistryEntry(CoreInstance measure)
     {
-        String systemPath = PackageableElement.getUserObjectPathForPackageableElementAsList(measure, false).makeString("::");
-        return "\t\tinterfaceByPath.put(\"" + systemPath + "\", org.finos.legend.pure.m3.coreinstance.meta.pure.metamodel.type.Measure.class);\n" +
-                "\t\ttypeFactoriesByPath.put(\"" + systemPath + "\", org.finos.legend.pure.m3.coreinstance.meta.pure.metamodel.type.MeasureInstance.FACTORY);\n";
+        String path = PackageableElement.getUserPathForPackageableElement(measure);
+        return "\t\tinterfaceByPath.put(\"" + path + "\", org.finos.legend.pure.m3.coreinstance.meta.pure.metamodel.type.Measure.class);\n" +
+                "\t\ttypeFactoriesByPath.put(\"" + path + "\", org.finos.legend.pure.m3.coreinstance.meta.pure.metamodel.type.MeasureInstance.FACTORY);\n";
     }
 
     private static String toUnitFactoryRegistryEntry(CoreInstance unit)
     {
-        String systemPath = PackageableElement.getUserObjectPathForPackageableElementAsList(unit, false).makeString("::");
-        return "\t\tinterfaceByPath.put(\"" + systemPath + "\", org.finos.legend.pure.m3.coreinstance.meta.pure.metamodel.type.Unit.class);\n" +
-                "\t\ttypeFactoriesByPath.put(\"" + systemPath + "\",org.finos.legend.pure.m3.coreinstance.meta.pure.metamodel.type.UnitInstance.FACTORY);\n"; // TODO: org.finos.legend.pure.generated.Root_meta_pure_metamodel_type_Unit_Impl
+        String path = PackageableElement.getUserPathForPackageableElement(unit);
+        return "\t\tinterfaceByPath.put(\"" + path + "\", org.finos.legend.pure.m3.coreinstance.meta.pure.metamodel.type.Unit.class);\n" +
+                "\t\ttypeFactoriesByPath.put(\"" + path + "\",org.finos.legend.pure.m3.coreinstance.meta.pure.metamodel.type.UnitInstance.FACTORY);\n"; // TODO: org.finos.legend.pure.generated.Root_meta_pure_metamodel_type_Unit_Impl
     }
 
     private String getFactoryRegistryName()
