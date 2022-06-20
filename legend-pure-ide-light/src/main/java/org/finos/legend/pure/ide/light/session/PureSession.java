@@ -33,11 +33,7 @@ import org.finos.legend.pure.m3.serialization.filesystem.usercodestorage.Mutable
 import org.finos.legend.pure.m3.serialization.filesystem.usercodestorage.RepositoryCodeStorage;
 import org.finos.legend.pure.m3.serialization.filesystem.usercodestorage.classpath.ClassLoaderCodeStorage;
 import org.finos.legend.pure.m3.serialization.filesystem.usercodestorage.fs.MutableFSCodeStorage;
-import org.finos.legend.pure.m3.serialization.runtime.ExecutedTestTracker;
-import org.finos.legend.pure.m3.serialization.runtime.Message;
-import org.finos.legend.pure.m3.serialization.runtime.PureRuntime;
-import org.finos.legend.pure.m3.serialization.runtime.PureRuntimeBuilder;
-import org.finos.legend.pure.m3.serialization.runtime.Source;
+import org.finos.legend.pure.m3.serialization.runtime.*;
 import org.finos.legend.pure.m3.statelistener.VoidExecutionActivityListener;
 import org.finos.legend.pure.m4.coreinstance.CoreInstance;
 import org.finos.legend.pure.m4.coreinstance.SourceInformation;
@@ -51,7 +47,9 @@ import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.nio.file.Paths;
+import java.util.Map;
 import java.util.Optional;
+import java.util.TreeMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.Pattern;
 import javax.servlet.http.HttpServletRequest;
@@ -71,6 +69,7 @@ public class PureSession
     public Message message = new Message("");
 
     public MutableList<RepositoryCodeStorage> repos;
+    private Map<String, Boolean> runtimeOptions = new TreeMap<>();
 
     public PureSession(SourceLocationConfiguration sourceLocationConfiguration, MutableList<RepositoryCodeStorage> repos)
     {
@@ -92,7 +91,16 @@ public class PureSession
         try
         {
             this.codeStorage = new PureCodeStorage(Paths.get(rootPath), this.repos.toArray(new RepositoryCodeStorage[0]));
-            this.pureRuntime = new PureRuntimeBuilder(this.codeStorage).withMessage(this.message).setUseFastCompiler(true).build();
+            this.pureRuntime = new PureRuntimeBuilder(this.codeStorage)
+                    .withMessage(this.message)
+                    .setUseFastCompiler(true)
+                    .withOptions(new RuntimeOptions() {
+                        @Override
+                        public boolean isOptionSet(String name) {
+                            return isRuntimeOptionSet(name);
+                        }
+                    })
+                    .build();
             this.functionExecution.init(this.pureRuntime, this.message);
             this.codeStorage.initialize(this.message);
         }
@@ -216,6 +224,21 @@ public class PureSession
         {
             executionCount.decrementAndGet();
         }
+    }
+
+    public void setRuntimeOption(String name, boolean value)
+    {
+        this.runtimeOptions.put(name, value);
+    }
+
+    public Optional<Boolean> getRuntimeOption(String name)
+    {
+        return Optional.ofNullable(this.runtimeOptions.get(name));
+    }
+
+    public boolean isRuntimeOptionSet(String name)
+    {
+        return this.getRuntimeOption(name).orElse(false);
     }
 
     public JSONObject saveFiles(HttpServletRequest request, HttpServletResponse response) throws IOException
