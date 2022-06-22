@@ -22,44 +22,50 @@ export const RuntimeOptions= observer(() => {
   const editorStore = useEditorStore();
   const [debugPlanOption, setDebugPlanOption] = useState(false);
   const [execPlanOption, setExecPlanOption] = useState(false);
-  const [localPlanOption, setLocalPlanOption] = useState(false);
+  const [planLocalOption, setPlanLocalOption] = useState(false);
+  const [showLocalPlanOption, setShowLocalPlanOption] = useState(false);
 
   const handleDebugOptionChange = () => {
     setDebugPlanOption(!debugPlanOption);
     editorStore.setDebugPlatformCodeGen(debugPlanOption);
   }
-
   const handleExecPlanOptionChange = () => {
     setExecPlanOption(!execPlanOption);
     editorStore.setExecPlan(execPlanOption);
   }
-
-  const handleLocalPlanOptionChange = () => {
-    setLocalPlanOption(!localPlanOption);
-    editorStore.setShowLocalPlan(localPlanOption);
+  const handlePlanLocalOptionChange = () => {
+    setPlanLocalOption(!planLocalOption);
+    editorStore.setPlanLocal(planLocalOption);
   }
-  const Checkbox = (obj: { label : string; value: boolean, onChange : () => void}) => {
-    let id="runtimeoptions-panel-item-".concat(obj.label);
-    return (
-    <div className={id}>
+  const handleShowLocalPlanOptionChange = () => {
+    setShowLocalPlanOption(!showLocalPlanOption);
+    editorStore.setShowLocalPlan(showLocalPlanOption);
+  }
+  const Checkbox = (obj: { label : string; value: boolean, padding?:number; onChange : () => void}) => {
+  let id="runtimeoptions-panel-item-".concat(obj.label);
+      let style = obj.padding == undefined ? {paddingLeft : 20, paddingTop: 5, paddingBottom: 5} : {paddingLeft : obj.padding, paddingTop: 5, paddingBottom: 5}; 
+  return (
+	<div className={id} style={style}>
       <label>
         <input type="checkbox" checked={obj.value} onChange={obj.onChange}/>
         {obj.label}
       </label>
       </div>
-    )
+  )
   };
 
   const checkboxes = [
     { label : 'Debug Platform Code Gen', value:editorStore.debugPlatformCodeGen, onChange : handleDebugOptionChange},
     { label : 'Exec Plan', value : editorStore.execPlan, onChange : handleExecPlanOptionChange},
-    { label : 'Local Plan', value : editorStore.showLocalPlan, onChange : handleLocalPlanOptionChange}
   ];
 
   return (
     <div className="runtimeoptions-panel">
-    <ul className='runtimeoptions-list'>
-      {checkboxes.map(({label, value, onChange}) => {return (<Checkbox label={label} value = {value} onChange = {onChange}/>)})};
+	  <ul className='runtimeoptions-list'>
+	  <Checkbox label={"Calculate and execute plans on Engine as opposed to executing functions on Engine"} value={editorStore.execPlan} onChange={handleExecPlanOptionChange}/>
+	  <Checkbox label={"Calculate plans in the IDE and then execute on Engine as opposed to calculating and executing on Engine"} value={editorStore.planLocal} onChange={handlePlanLocalOptionChange}/>
+	  <Checkbox label={"... and debug platform code generation"} padding={40} value={editorStore.debugPlatformCodeGen} onChange={handleDebugOptionChange}/>
+	  <Checkbox label={"... and print the plan calculated"} padding={40} value={editorStore.showLocalPlan} onChange={handleShowLocalPlanOptionChange}/>
     </ul>
     </div>
   )
