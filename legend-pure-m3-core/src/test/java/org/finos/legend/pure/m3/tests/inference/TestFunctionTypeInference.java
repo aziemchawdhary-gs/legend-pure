@@ -637,6 +637,22 @@ public class TestFunctionTypeInference extends AbstractPureTestWithCoreCompiledP
     }
 
     @Test
+    public void testAz()
+    {
+        runtime.createInMemorySource("inferenceTest.pure", "function func():FunctionDefinition<{Integer[1], Integer[0]->Integer[*]}>[0..*] {\n" +
+//                "[1,2];\n" +
+                "let input = {| [1,2]->fold({index, acc | $acc->concatenate($index);}, [])};\n" +
+                        "let foldLambda = $input->evaluateAndDeactivate().expressionSequence->cast(@SimpleFunctionExpression).parametersValues->at(1)->cast(@InstanceValue).values->cast(@FunctionDefinition<Any>)->toOne();\n" +
+"      let foldLambdaAccParam = $foldLambda.classifierGenericType->toOne().typeArguments->at(0).rawType->toOne()->cast(@FunctionType).parameters->at(1).multiplicity;\n"+
+//                        "let foldLambda = $input->evaluateAndDeactivate();\n" +
+                "}"
+                );
+
+        runtime.compile();
+        Assert.assertTrue(true);
+    }
+
+    @Test
     public void testLambdasInferForDecide()
     {
         runtime.createInMemorySource("inferenceTest.pure", "" +

@@ -73,6 +73,7 @@ public class AbstractPureTestWithCoreCompiledPlatform extends AbstractPureTestWi
                     "native function meta::pure::functions::collection::contains(collection:Any[*], value:Any[1]):Boolean[1];\n" +
                     "native function meta::pure::functions::lang::if<T|m>(test:Boolean[1], valid:Function<{->T[m]}>[1], invalid:Function<{->T[m]}>[1]):T[m];\n" +
                     "native function meta::pure::functions::lang::eval<V|m>(func:Function<{->V[m]}>[1]):V[m];\n" +
+                            "native function meta::pure::functions::meta::evaluateAndDeactivate<T|m>(var:T[m]):T[m];\n" +
                     "native function meta::pure::functions::lang::eval<T,V|m,n>(func:Function<{T[n]->V[m]}>[1], param:T[n]):V[m];\n" +
                     "native function meta::pure::functions::lang::eval<T,U,V|m,n,p>(func:Function<{T[n],U[p]->V[m]}>[1], param1:T[n], param2:U[p]):V[m];\n" +
                     "native function meta::pure::functions::lang::eval<T,U,V,W|m,n,p,q>(func:Function<{T[n],U[p],W[q]->V[m]}>[1], param1:T[n], param2:U[p], param3:W[q]):V[m];\n" +
