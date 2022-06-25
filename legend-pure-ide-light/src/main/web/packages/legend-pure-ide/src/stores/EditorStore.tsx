@@ -219,6 +219,7 @@ export class EditorStore {
   debugPlatformCodeGen = false;
   execPlan = false;
   showLocalPlan = false;
+  planLocal = false;
   includeAlloyOnlyTests = false;
   serilizationKind = 'json';
 
@@ -369,6 +370,9 @@ export class EditorStore {
   setExecPlan(val:boolean) : void {
     this.client.setRuntimeOption('ExecPlan', val).then(v => this.execPlan = val);
   }
+    setPlanLocal(val:boolean) : void {
+	this.client.setRuntimeOption('PlanLocal', val).then(v => this.planLocal = val);
+    }
   setShowLocalPlan(val:boolean):void {
     this.client.setRuntimeOption('ShowLocalPlan', val).then(v => this.showLocalPlan = val);
   }
