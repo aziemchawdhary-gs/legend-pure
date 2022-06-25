@@ -246,7 +246,7 @@ export class EditorStore {
     this.client = new PureClient(
       new NetworkClient({
         // NOTE: ignore the URL specified in the config so we can use this client for both Pure and Engine
-        baseUrl: window.location.origin,
+          baseUrl: "http://localhost:9010",//window.location.origin,
       }),
     );
 
