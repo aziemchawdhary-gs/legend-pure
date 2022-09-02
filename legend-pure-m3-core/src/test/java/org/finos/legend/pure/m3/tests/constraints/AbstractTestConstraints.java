@@ -18,6 +18,7 @@ import org.eclipse.collections.api.tuple.Pair;
 import org.eclipse.collections.impl.tuple.Tuples;
 import org.finos.legend.pure.m3.AbstractPureTestWithCoreCompiled;
 import org.finos.legend.pure.m3.exception.PureExecutionException;
+import org.finos.legend.pure.m3.exception.PureUnmatchedFunctionException;
 import org.finos.legend.pure.m3.serialization.filesystem.PureCodeStorage;
 import org.finos.legend.pure.m3.serialization.filesystem.TestCodeRepositoryWithDependencies;
 import org.finos.legend.pure.m3.serialization.filesystem.repository.CodeRepository;
@@ -665,6 +666,45 @@ public abstract class AbstractTestConstraints extends AbstractPureTestWithCoreCo
                         "   endDate: Date[1];\n" +
                         "}"));
         assertPureException(PureParserException.class, "expected: one of {'~externalId', '~function'} found: ')'", 6, 4, e);
+    }
+
+    @Test
+    public void testExtendedConstraintGrammarCompilationFailure()
+    {
+        try {
+            this.compileTestSource("fromString.pure", "Class Position<T>\n" +
+                    "[\n" +
+                    "   c1\n" +
+                    "   (\n" +
+                    "      ~owner            : Finance\n" +
+                    "      ~externalId       : 'My_Ext_Id'\n" +
+//                    "      ~function         : $this.s->isNotEmpty()\n" +
+                    "      ~function         : $this.contractId->startsWith('A')\n" +
+                    "      ~enforcementLevel : Error\n" +
+                    "      ~message          : 'Contract ID: ' + $this.contractId\n" +
+                    "   )\n" +
+                    "]\n" +
+                    "{\n" +
+                    "   contractId: String[0..1];\n" +
+                    "   positionType: String[1];\n" +
+                    "   startDate: Date[1];\n" +
+                    "   endDate: Date[1];\n" +
+                    "   s : T[0..1];" +
+                    "   b() { $this.s->isNotEmpty(); } : Boolean[1];" +
+                    "}");
+            Assert.fail();
+        }
+        catch(Exception e)
+        {
+            String expectedError = "The system can't find a match for the function: startsWith(_:String[0..1],_:String[1])\n" +
+                    "\n" +
+                    "No functions, in packages already imported, match the function name.\n" +
+                    "\n" +
+                    "These functions, in packages not imported, match the function name. Add the package to imports so that the function is in scope.\n" +
+                    "\tmeta::pure::functions::string::startsWith(String[1], String[1]):Boolean[1]\n";
+
+            this.assertOriginatingPureException(PureUnmatchedFunctionException.class, expectedError,7,45,e);
+        }
     }
 
     @Test

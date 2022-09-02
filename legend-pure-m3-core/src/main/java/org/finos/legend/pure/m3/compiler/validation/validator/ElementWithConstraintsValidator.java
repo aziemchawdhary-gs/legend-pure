@@ -17,6 +17,7 @@ package org.finos.legend.pure.m3.compiler.validation.validator;
 import org.eclipse.collections.api.RichIterable;
 import org.eclipse.collections.api.list.MutableList;
 import org.eclipse.collections.impl.list.mutable.FastList;
+import org.finos.legend.pure.m3.coreinstance.meta.pure.metamodel.valuespecification.FunctionExpression;
 import org.finos.legend.pure.m3.navigation.M3Paths;
 import org.finos.legend.pure.m3.compiler.Context;
 import org.finos.legend.pure.m3.navigation.importstub.ImportStub;
@@ -48,10 +49,10 @@ public class ElementWithConstraintsValidator implements MatchRunner<ElementWithC
     @Override
     public void run(ElementWithConstraints instance, MatcherState state, Matcher matcher, ModelRepository modelRepository, Context context) throws PureCompilationException
     {
-        validateConstraints((ModelElement)instance, instance._constraints(), state);
+        validateConstraints((ModelElement)instance, instance._constraints(), state, matcher, modelRepository, context);
     }
 
-    static void validateConstraints(ModelElement instance, RichIterable<? extends Constraint> constraints, MatcherState state) throws PureCompilationException
+    static void validateConstraints(ModelElement instance, RichIterable<? extends Constraint> constraints, MatcherState state, Matcher matcher, ModelRepository modelRepository, Context context) throws PureCompilationException
     {
         ValidatorState validatorState = (ValidatorState)state;
         ProcessorSupport processorSupport = validatorState.getProcessorSupport();
@@ -71,6 +72,10 @@ public class ElementWithConstraintsValidator implements MatchRunner<ElementWithC
                 ruleNames.add(ruleName);
 
                 ValueSpecification definition = constraint._functionDefinition()._expressionSequence().getFirst();
+                if (definition instanceof FunctionExpression)
+                {
+                    FunctionExpressionValidator.validateFunctionExpression(matcher, validatorState, (FunctionExpression) definition, modelRepository, processorSupport);
+                }
                 Type type = (Type)ImportStub.withImportStubByPass(definition._genericType()._rawTypeCoreInstance(), processorSupport);
                 if (type != booleanType || !Multiplicity.isToOne(definition._multiplicity(), true))
                 {
@@ -82,6 +87,10 @@ public class ElementWithConstraintsValidator implements MatchRunner<ElementWithC
                     if(constraint._messageFunction() != null)
                     {
                         ValueSpecification message = constraint._messageFunction()._expressionSequence().getFirst();
+                        if (message instanceof FunctionExpression)
+                        {
+                            FunctionExpressionValidator.validateFunctionExpression(matcher, validatorState, (FunctionExpression) message, modelRepository, processorSupport);
+                        }
                         Type messageType = (Type)ImportStub.withImportStubByPass(message._genericType()._rawTypeCoreInstance(), processorSupport);
                         if (messageType != stringType || !Multiplicity.isToOne(message._multiplicity(), true))
                         {
