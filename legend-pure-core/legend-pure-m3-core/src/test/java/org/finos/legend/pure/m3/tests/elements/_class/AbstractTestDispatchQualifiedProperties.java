@@ -41,9 +41,22 @@ public class AbstractTestDispatchQualifiedProperties extends AbstractPureTestWit
                         "   f(){'b'}:String[1];" +
                         "   f(s:String[1]){'b'+$s}:String[1];" +
                         "}" +
+                        "Class D" +
+                        "{" +
+                        "  i : Integer[1];" +
+                        "}" +
+                        "Class C" +
+                        "{" +
+                        "   f : Function<{Integer[1]->Integer[1]}>[1];" +
+                        "   f(i:Integer[1]){^D(i=$this.f->eval($i));}:D[1];" +
+                        "}" +
                         "function n():A[1]" +
                         "{ " +
                         "   ^B();" +
+                        "}" +
+                        "function myfunc(i:Integer[1]):Integer[1]" +
+                        "{ " +
+                        "   $i+1;" +
                         "}" +
                         "function testNew():Any[*]\n" +
                         "{\n" +
@@ -53,6 +66,7 @@ public class AbstractTestDispatchQualifiedProperties extends AbstractPureTestWit
                         "   assertEquals('bok', n().f('ok'));" +
                         "   assertEquals('b', n().f);" +
                         "   assertEquals(['a','b','a','b'], [^A(),^B(),^A(),^B()]->cast(@A).f);" +
+                        "   assertEquals(2, ^C(f=myfunc_Integer_1__Integer_1_)->evaluateAndDeactivate().f(1).i);" +
                         "}\n");
         execute("testNew():Any[*]");
     }
