@@ -749,6 +749,16 @@ public class FunctionExecutionInterpreted implements FunctionExecution
                 variableContext.markVariableScopeBoundary();
             }
 
+            // Capture execution context for debugging if profiler is a DebugProfiler
+            if (profiler instanceof org.finos.legend.pure.runtime.java.interpreted.debugger.DebugProfiler)
+            {
+                ((org.finos.legend.pure.runtime.java.interpreted.debugger.DebugProfiler) profiler).captureExecutionContext(
+                    variableContext,
+                    functionExpressionCallStack,
+                    resolvedTypeParameters
+                );
+            }
+
             if (function instanceof PackageableFunction)
             {
                 for (CoreInstance constraint : ((PackageableFunction<?>) function)._preConstraints())

@@ -53,6 +53,15 @@ class FunctionExpressionExecutor implements Executor
     @Override
     public CoreInstance execute(CoreInstance instance, Stack<MutableMap<String, CoreInstance>> resolvedTypeParameters, Stack<MutableMap<String, CoreInstance>> resolvedMultiplicityParameters, MutableStack<CoreInstance> functionExpressionCallStack, VariableContext variableContext, Profiler profiler, InstantiationContext instantiationContext, ExecutionSupport executionSupport, FunctionExecutionInterpreted functionExecutionInterpreted, ProcessorSupport processorSupport) throws PureExecutionException
     {
+        // Capture execution context for debugging if profiler is a DebugProfiler
+        if (profiler instanceof org.finos.legend.pure.runtime.java.interpreted.debugger.DebugProfiler)
+        {
+            ((org.finos.legend.pure.runtime.java.interpreted.debugger.DebugProfiler) profiler).captureExecutionContext(
+                variableContext,
+                functionExpressionCallStack,
+                resolvedTypeParameters
+            );
+        }
         profiler.startExecutingFunctionExpression(instance, functionExpressionCallStack.isEmpty() ? null : functionExpressionCallStack.peek());
         functionExpressionCallStack.push(instance);
         try
