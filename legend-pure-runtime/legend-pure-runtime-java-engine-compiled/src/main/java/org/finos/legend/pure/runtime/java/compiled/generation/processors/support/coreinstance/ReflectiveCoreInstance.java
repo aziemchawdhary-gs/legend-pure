@@ -19,7 +19,6 @@ import org.eclipse.collections.api.factory.Lists;
 import org.eclipse.collections.api.list.ListIterable;
 import org.eclipse.collections.api.list.MutableList;
 import org.eclipse.collections.api.set.MutableSet;
-import org.eclipse.collections.impl.utility.ArrayIterate;
 import org.eclipse.collections.impl.utility.Iterate;
 import org.finos.legend.pure.m3.coreinstance.helper.AnyHelper;
 import org.finos.legend.pure.m3.coreinstance.helper.AnyStubHelper;
@@ -37,9 +36,18 @@ import org.finos.legend.pure.m4.transaction.ModelRepositoryTransaction;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.math.BigDecimal;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 public abstract class ReflectiveCoreInstance extends AbstractCompiledCoreInstance
 {
+    /**
+     * Per-class cache of property method lookups. Eliminates repeated
+     * getClass().getMethods() scans and getClass().getMethod() calls
+     * which are O(n) per invocation.
+     */
+    private static final ConcurrentHashMap<Class<?>, MethodIndex> METHOD_INDEX_CACHE = new ConcurrentHashMap<>();
+
     private final String __id;
     private SourceInformation sourceInformation;
 
@@ -118,8 +126,7 @@ public abstract class ReflectiveCoreInstance extends AbstractCompiledCoreInstanc
     @Override
     public void modifyValueForToManyMetaProperty(String key, int offset, CoreInstance value)
     {
-        String methodName = "_" + key;
-        Method setMethod = ArrayIterate.detect(getClass().getMethods(), m -> (m.getParameterCount() == 1) && methodName.equals(m.getName()) && (m.getParameterTypes()[0] == RichIterable.class));
+        Method setMethod = getSetterForKey(key);
         if (setMethod == null)
         {
             throw new IllegalArgumentException("Cannot find property '" + key + "'");
@@ -394,8 +401,7 @@ public abstract class ReflectiveCoreInstance extends AbstractCompiledCoreInstanc
     public void setKeyValues(ListIterable<String> key, ListIterable<? extends CoreInstance> value)
     {
         String propertyName = key.getLast();
-        String methodName = "_" + propertyName;
-        Method method = ArrayIterate.detect(getClass().getMethods(), m -> (m.getParameterCount() == 1) && methodName.equals(m.getName()) && (m.getParameterTypes()[0] == RichIterable.class));
+        Method method = getSetterForKey(propertyName);
         if (method == null)
         {
             throw new IllegalArgumentException("Could not find property '" + propertyName + "' for " + this);
@@ -447,16 +453,13 @@ public abstract class ReflectiveCoreInstance extends AbstractCompiledCoreInstanc
     public void addKeyValue(ListIterable<String> key, CoreInstance value)
     {
         String propertyName = key.getLast();
-        Method[] allMethods = getClass().getMethods();
 
         // Try to find the set value method for a to-one property
-        String setOneMethodName = "_" + propertyName;
-        Method method = ArrayIterate.detect(allMethods, m -> (m.getParameterCount() == 1) && setOneMethodName.equals(m.getName()) && (m.getParameterTypes()[0] != RichIterable.class));
+        Method method = getToOneSetterForKey(propertyName);
         if (method == null)
         {
             // Try to find the add value method for a to-many property
-            String addOneMethodName = setOneMethodName + "Add";
-            method = ArrayIterate.detect(allMethods, m -> (m.getParameterCount() == 1) && addOneMethodName.equals(m.getName()) && (m.getParameterTypes()[0] != RichIterable.class));
+            method = getAddMethodForKey(propertyName);
             if (method == null)
             {
                 throw new IllegalArgumentException("Unknown property '" + propertyName + "'");
@@ -519,26 +522,34 @@ public abstract class ReflectiveCoreInstance extends AbstractCompiledCoreInstanc
 
     public abstract String getFullSystemPath();
 
+    private MethodIndex getMethodIndex()
+    {
+        return METHOD_INDEX_CACHE.computeIfAbsent(getClass(), MethodIndex::new);
+    }
+
     private Method getGetMethodForKey(String key)
     {
-        return getNoParameterMethod("_" + key);
+        return getMethodIndex().getGetter(key);
     }
 
     private Method getRemoveAllMethodForKey(String key)
     {
-        return getNoParameterMethod("_" + key + "Remove");
+        return getMethodIndex().getRemover(key);
     }
 
-    private Method getNoParameterMethod(String methodName)
+    private Method getSetterForKey(String key)
     {
-        try
-        {
-            return getClass().getMethod(methodName);
-        }
-        catch (NoSuchMethodException e)
-        {
-            return null;
-        }
+        return getMethodIndex().getSetter(key);
+    }
+
+    private Method getAddMethodForKey(String key)
+    {
+        return getMethodIndex().getAdder(key);
+    }
+
+    private Method getToOneSetterForKey(String key)
+    {
+        return getMethodIndex().getToOneSetter(key);
     }
 
     private Object getRawValueForMetaProperty(String propertyName)
@@ -648,6 +659,128 @@ public abstract class ReflectiveCoreInstance extends AbstractCompiledCoreInstanc
             {
                 throw new IllegalArgumentException("Type not supported to retrieve value from ReflectiveCoreInstance - " + valueType);
             }
+        }
+    }
+
+    /**
+     * Cached index of property methods for a given class. Built once per concrete
+     * class and reused across all instances. Replaces per-call reflective lookups
+     * (getClass().getMethods() scans, getClass().getMethod() calls) with O(1)
+     * HashMap lookups.
+     *
+     * Categorizes methods into:
+     * - getters: _propertyName() -- zero-parameter methods
+     * - setters: _propertyName(RichIterable) -- for setKeyValues / modifyValueForToManyMetaProperty
+     * - toOneSetters: _propertyName(T) -- single-value setter (param != RichIterable)
+     * - adders: _propertyNameAdd(T) -- for to-many addKeyValue
+     * - removers: _propertyNameRemove() -- zero-parameter remove methods
+     */
+    private static final class MethodIndex
+    {
+        private final Map<String, Method> getters;
+        private final Map<String, Method> setters;
+        private final Map<String, Method> toOneSetters;
+        private final Map<String, Method> adders;
+        private final Map<String, Method> removers;
+
+        MethodIndex(Class<?> clazz)
+        {
+            Map<String, Method> getterMap = new ConcurrentHashMap<>();
+            Map<String, Method> setterMap = new ConcurrentHashMap<>();
+            Map<String, Method> toOneSetterMap = new ConcurrentHashMap<>();
+            Map<String, Method> adderMap = new ConcurrentHashMap<>();
+            Map<String, Method> removerMap = new ConcurrentHashMap<>();
+
+            for (Method m : clazz.getMethods())
+            {
+                String name = m.getName();
+                if (!name.startsWith("_"))
+                {
+                    continue;
+                }
+
+                int paramCount = m.getParameterCount();
+
+                if (name.endsWith("Remove"))
+                {
+                    if (paramCount == 0)
+                    {
+                        // _propertyNameRemove() -- zero-param remover
+                        String propertyName = name.substring(1, name.length() - 6);
+                        removerMap.put(propertyName, m);
+                    }
+                    // Skip _propertyNameRemove(T) -- single-item remove, not used by removeProperty
+                    continue;
+                }
+
+                if (name.endsWith("Add"))
+                {
+                    if (paramCount == 1 && m.getParameterTypes()[0] != RichIterable.class)
+                    {
+                        // _propertyNameAdd(T) -- to-many adder
+                        String propertyName = name.substring(1, name.length() - 3);
+                        adderMap.put(propertyName, m);
+                    }
+                    continue;
+                }
+
+                if (name.endsWith("AddAll"))
+                {
+                    continue;
+                }
+
+                // Regular _propertyName method
+                String propertyName = name.substring(1);
+                if (paramCount == 0)
+                {
+                    // _propertyName() -- getter
+                    getterMap.put(propertyName, m);
+                }
+                else if (paramCount == 1)
+                {
+                    if (m.getParameterTypes()[0] == RichIterable.class)
+                    {
+                        // _propertyName(RichIterable) -- setter for setKeyValues
+                        setterMap.put(propertyName, m);
+                    }
+                    else
+                    {
+                        // _propertyName(T) -- to-one setter
+                        toOneSetterMap.put(propertyName, m);
+                    }
+                }
+            }
+
+            this.getters = getterMap;
+            this.setters = setterMap;
+            this.toOneSetters = toOneSetterMap;
+            this.adders = adderMap;
+            this.removers = removerMap;
+        }
+
+        Method getGetter(String propertyName)
+        {
+            return this.getters.get(propertyName);
+        }
+
+        Method getSetter(String propertyName)
+        {
+            return this.setters.get(propertyName);
+        }
+
+        Method getToOneSetter(String propertyName)
+        {
+            return this.toOneSetters.get(propertyName);
+        }
+
+        Method getAdder(String propertyName)
+        {
+            return this.adders.get(propertyName);
+        }
+
+        Method getRemover(String propertyName)
+        {
+            return this.removers.get(propertyName);
         }
     }
 }
