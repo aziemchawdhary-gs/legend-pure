@@ -192,6 +192,10 @@ public class ClassImplProcessor
                 buildGetRealGetKeyByName() +
                 buildGetValueForMetaPropertyToOne(classGenericType, processorSupport) +
                 buildGetValueForMetaPropertyToMany(classGenericType, processorSupport) +
+                buildSetKeyValues(classGenericType, processorSupport) +
+                buildAddKeyValue(classGenericType, processorSupport) +
+                buildModifyValueForToManyMetaProperty(classGenericType, processorSupport) +
+                buildRemoveProperty(classGenericType, processorSupport) +
 
                 buildSimpleProperties(classGenericType, (property, name, unresolvedReturnType, returnType, returnMultiplicity, returnTypeJava, classOwnerId, ownerClassName, ownerTypeParams, processorContext1) ->
                 {
@@ -561,6 +565,259 @@ public class ClassImplProcessor
                         "            default:\n" +
                         "            {\n" +
                         "                return super.getValueForMetaPropertyToMany(keyName);\n" +
+                        "            }\n" +
+                        "        }\n" +
+                        "    }\n" +
+                        "\n";
+            }
+        }
+    }
+
+    public static String buildSetKeyValues(CoreInstance classGenericType, ProcessorSupport processorSupport)
+    {
+        CoreInstance _class = Instance.getValueForMetaPropertyToOneResolved(classGenericType, M3Properties.rawType, processorSupport);
+        MutableList<CoreInstance> allProperties = processorSupport.class_getSimpleProperties(_class).toSortedListBy(CoreInstance::getName);
+        switch (allProperties.size())
+        {
+            case 0:
+            {
+                return "";
+            }
+            case 1:
+            {
+                String propertyName = allProperties.get(0).getName();
+                return "    @Override\n" +
+                        "    public void setKeyValues(ListIterable<String> key, ListIterable<? extends CoreInstance> value)\n" +
+                        "    {\n" +
+                        "        if (\"" + propertyName + "\".equals(key.getLast()))\n" +
+                        "        {\n" +
+                        "            _" + propertyName + "((RichIterable) ReflectiveCoreInstance.toJavaForInvocationCollection(value));\n" +
+                        "            return;\n" +
+                        "        }\n" +
+                        "        super.setKeyValues(key, value);\n" +
+                        "    }\n" +
+                        "\n";
+            }
+            default:
+            {
+                return "    @Override\n" +
+                        "    public void setKeyValues(ListIterable<String> key, ListIterable<? extends CoreInstance> value)\n" +
+                        "    {\n" +
+                        "        String propertyName = key.getLast();\n" +
+                        "        switch (propertyName)\n" +
+                        "        {\n" +
+                        allProperties.collect(property ->
+                                "            case \"" + property.getName() + "\":\n" +
+                                        "            {\n" +
+                                        "                _" + property.getName() + "((RichIterable) ReflectiveCoreInstance.toJavaForInvocationCollection(value));\n" +
+                                        "                return;\n" +
+                                        "            }\n").makeString("") +
+                        "            default:\n" +
+                        "            {\n" +
+                        "                super.setKeyValues(key, value);\n" +
+                        "            }\n" +
+                        "        }\n" +
+                        "    }\n" +
+                        "\n";
+            }
+        }
+    }
+
+    public static String buildAddKeyValue(CoreInstance classGenericType, ProcessorSupport processorSupport)
+    {
+        CoreInstance _class = Instance.getValueForMetaPropertyToOneResolved(classGenericType, M3Properties.rawType, processorSupport);
+        MutableList<CoreInstance> allProperties = processorSupport.class_getSimpleProperties(_class).toSortedListBy(CoreInstance::getName);
+        switch (allProperties.size())
+        {
+            case 0:
+            {
+                return "";
+            }
+            case 1:
+            {
+                CoreInstance property = allProperties.get(0);
+                String propertyName = property.getName();
+                CoreInstance returnType = ClassProcessor.getPropertyResolvedReturnType(classGenericType, property, processorSupport);
+                String typeObject = TypeProcessor.typeToJavaObjectSingle(returnType, true, processorSupport);
+                boolean toOne = isToOne(property, processorSupport);
+                String call = toOne ? "_" + propertyName + "((" + typeObject + ") javaValue)" : "_" + propertyName + "Add((" + typeObject + ") javaValue)";
+                return "    @Override\n" +
+                        "    public void addKeyValue(ListIterable<String> key, CoreInstance value)\n" +
+                        "    {\n" +
+                        "        if (\"" + propertyName + "\".equals(key.getLast()))\n" +
+                        "        {\n" +
+                        "            Object javaValue = ReflectiveCoreInstance.toJavaForInvocation(value);\n" +
+                        "            " + call + ";\n" +
+                        "            return;\n" +
+                        "        }\n" +
+                        "        super.addKeyValue(key, value);\n" +
+                        "    }\n" +
+                        "\n";
+            }
+            default:
+            {
+                return "    @Override\n" +
+                        "    public void addKeyValue(ListIterable<String> key, CoreInstance value)\n" +
+                        "    {\n" +
+                        "        String propertyName = key.getLast();\n" +
+                        "        Object javaValue = ReflectiveCoreInstance.toJavaForInvocation(value);\n" +
+                        "        switch (propertyName)\n" +
+                        "        {\n" +
+                        allProperties.collect(property ->
+                        {
+                            String name = property.getName();
+                            CoreInstance returnType = ClassProcessor.getPropertyResolvedReturnType(classGenericType, property, processorSupport);
+                            String typeObject = TypeProcessor.typeToJavaObjectSingle(returnType, true, processorSupport);
+                            boolean toOne = isToOne(property, processorSupport);
+                            String call = toOne ? "_" + name + "((" + typeObject + ") javaValue)" : "_" + name + "Add((" + typeObject + ") javaValue)";
+                            return "            case \"" + name + "\":\n" +
+                                    "            {\n" +
+                                    "                " + call + ";\n" +
+                                    "                return;\n" +
+                                    "            }\n";
+                        }).makeString("") +
+                        "            default:\n" +
+                        "            {\n" +
+                        "                super.addKeyValue(key, value);\n" +
+                        "            }\n" +
+                        "        }\n" +
+                        "    }\n" +
+                        "\n";
+            }
+        }
+    }
+
+    public static String buildModifyValueForToManyMetaProperty(CoreInstance classGenericType, ProcessorSupport processorSupport)
+    {
+        CoreInstance _class = Instance.getValueForMetaPropertyToOneResolved(classGenericType, M3Properties.rawType, processorSupport);
+        MutableList<CoreInstance> toManyProperties = processorSupport.class_getSimpleProperties(_class).reject(p -> isToOne(p, processorSupport), Lists.mutable.empty()).sortThisBy(CoreInstance::getName);
+        switch (toManyProperties.size())
+        {
+            case 0:
+            {
+                return "";
+            }
+            case 1:
+            {
+                String propertyName = toManyProperties.get(0).getName();
+                return "    @Override\n" +
+                        "    public void modifyValueForToManyMetaProperty(String key, int offset, CoreInstance value)\n" +
+                        "    {\n" +
+                        "        if (\"" + propertyName + "\".equals(key))\n" +
+                        "        {\n" +
+                        "            Object newValue = ReflectiveCoreInstance.toJavaForInvocation(value);\n" +
+                        "            MutableList<Object> newValues;\n" +
+                        "            RichIterable current = this._" + propertyName + ";\n" +
+                        "            if (current == null || current.isEmpty())\n" +
+                        "            {\n" +
+                        "                newValues = Lists.mutable.empty();\n" +
+                        "            }\n" +
+                        "            else\n" +
+                        "            {\n" +
+                        "                newValues = Lists.mutable.withAll(current);\n" +
+                        "            }\n" +
+                        "            if (offset == 0 && newValues.isEmpty())\n" +
+                        "            {\n" +
+                        "                newValues.add(newValue);\n" +
+                        "            }\n" +
+                        "            else\n" +
+                        "            {\n" +
+                        "                newValues.set(offset, newValue);\n" +
+                        "            }\n" +
+                        "            _" + propertyName + "((RichIterable) newValues);\n" +
+                        "            return;\n" +
+                        "        }\n" +
+                        "        super.modifyValueForToManyMetaProperty(key, offset, value);\n" +
+                        "    }\n" +
+                        "\n";
+            }
+            default:
+            {
+                return "    @Override\n" +
+                        "    public void modifyValueForToManyMetaProperty(String key, int offset, CoreInstance value)\n" +
+                        "    {\n" +
+                        "        switch (key)\n" +
+                        "        {\n" +
+                        toManyProperties.collect(property ->
+                        {
+                            String name = property.getName();
+                            return "            case \"" + name + "\":\n" +
+                                    "            {\n" +
+                                    "                Object newValue = ReflectiveCoreInstance.toJavaForInvocation(value);\n" +
+                                    "                MutableList<Object> newValues;\n" +
+                                    "                RichIterable current = this._" + name + ";\n" +
+                                    "                if (current == null || current.isEmpty())\n" +
+                                    "                {\n" +
+                                    "                    newValues = Lists.mutable.empty();\n" +
+                                    "                }\n" +
+                                    "                else\n" +
+                                    "                {\n" +
+                                    "                    newValues = Lists.mutable.withAll(current);\n" +
+                                    "                }\n" +
+                                    "                if (offset == 0 && newValues.isEmpty())\n" +
+                                    "                {\n" +
+                                    "                    newValues.add(newValue);\n" +
+                                    "                }\n" +
+                                    "                else\n" +
+                                    "                {\n" +
+                                    "                    newValues.set(offset, newValue);\n" +
+                                    "                }\n" +
+                                    "                _" + name + "((RichIterable) newValues);\n" +
+                                    "                return;\n" +
+                                    "            }\n";
+                        }).makeString("") +
+                        "            default:\n" +
+                        "            {\n" +
+                        "                super.modifyValueForToManyMetaProperty(key, offset, value);\n" +
+                        "            }\n" +
+                        "        }\n" +
+                        "    }\n" +
+                        "\n";
+            }
+        }
+    }
+
+    public static String buildRemoveProperty(CoreInstance classGenericType, ProcessorSupport processorSupport)
+    {
+        CoreInstance _class = Instance.getValueForMetaPropertyToOneResolved(classGenericType, M3Properties.rawType, processorSupport);
+        MutableList<CoreInstance> allProperties = processorSupport.class_getSimpleProperties(_class).toSortedListBy(CoreInstance::getName);
+        switch (allProperties.size())
+        {
+            case 0:
+            {
+                return "";
+            }
+            case 1:
+            {
+                String propertyName = allProperties.get(0).getName();
+                return "    @Override\n" +
+                        "    public void removeProperty(String propertyName)\n" +
+                        "    {\n" +
+                        "        if (\"" + propertyName + "\".equals(propertyName))\n" +
+                        "        {\n" +
+                        "            _" + propertyName + "Remove();\n" +
+                        "            return;\n" +
+                        "        }\n" +
+                        "        super.removeProperty(propertyName);\n" +
+                        "    }\n" +
+                        "\n";
+            }
+            default:
+            {
+                return "    @Override\n" +
+                        "    public void removeProperty(String propertyName)\n" +
+                        "    {\n" +
+                        "        switch (propertyName)\n" +
+                        "        {\n" +
+                        allProperties.collect(property ->
+                                "            case \"" + property.getName() + "\":\n" +
+                                        "            {\n" +
+                                        "                _" + property.getName() + "Remove();\n" +
+                                        "                return;\n" +
+                                        "            }\n").makeString("") +
+                        "            default:\n" +
+                        "            {\n" +
+                        "                super.removeProperty(propertyName);\n" +
                         "            }\n" +
                         "        }\n" +
                         "    }\n" +

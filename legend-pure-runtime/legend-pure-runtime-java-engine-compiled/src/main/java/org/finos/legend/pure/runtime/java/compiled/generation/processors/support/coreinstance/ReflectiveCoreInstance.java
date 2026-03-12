@@ -601,7 +601,7 @@ public abstract class ReflectiveCoreInstance extends AbstractCompiledCoreInstanc
         }
     }
 
-    private static Object toJavaForInvocation(CoreInstance instance)
+    protected static Object toJavaForInvocation(CoreInstance instance)
     {
         if (instance instanceof ValCoreInstance)
         {
@@ -614,6 +614,16 @@ public abstract class ReflectiveCoreInstance extends AbstractCompiledCoreInstanc
         }
 
         return AnyStubHelper.fromStub(instance);
+    }
+
+    protected static RichIterable<Object> toJavaForInvocationCollection(ListIterable<? extends CoreInstance> instances)
+    {
+        MutableList<Object> result = Lists.mutable.ofInitialCapacity(instances.size());
+        for (CoreInstance instance : instances)
+        {
+            result.add(toJavaForInvocation(instance));
+        }
+        return result;
     }
 
     private static Object invokeMethodWithJavaType(ValCoreInstance value)
