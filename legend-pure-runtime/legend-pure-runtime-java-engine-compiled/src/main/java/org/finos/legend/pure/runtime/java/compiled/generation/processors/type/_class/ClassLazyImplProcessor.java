@@ -141,30 +141,44 @@ public class ClassLazyImplProcessor
         boolean instanceOfGetterOverride = processorSupport.instance_instanceOf(_class, M3Paths.GetterOverride);
 
         processorContext.setClassImplSuffix(CLASS_LAZYIMPL_SUFFIX);
-        return StringJavaSource.newStringJavaSource(_package, className, IMPORTS + (hasQualifiers ? QUALIFIER_IMPORTS : "") + imports +
-                "public class " + classNamePlusTypeParams + " extends AbstractLazyReflectiveCoreInstance implements " + interfaceNamePlusTypeParams + "\n" +
-                "{\n" +
-                ClassImplProcessor.buildMetaInfo(classGenericType, className, processorSupport, processorContext, true) + "\n" +
-                buildLazyConstructor(className) +
-                (ClassProcessor.isPlatformClass(_class) ? buildFactory(className) : "") +
-                "\n" +
-                ClassImplProcessor.buildGetKeys() +
-                ClassImplProcessor.buildGetRealGetKeyByName() +
-                (instanceOfGetterOverride ? lazyGetterOverride(interfaceNamePlusTypeParams) : "") +
-                ClassImplProcessor.buildGetValueForMetaPropertyToOne(classGenericType, processorSupport) +
-                ClassImplProcessor.buildGetValueForMetaPropertyToMany(classGenericType, processorSupport) +
-                ClassImplProcessor.buildSimpleProperties(classGenericType, (property, name, unresolvedReturnType, returnType, returnMultiplicity, returnTypeJava, classOwnerId, ownerClassName, ownerTypeParams, processorContext1) -> "    public final AtomicBoolean _" + name + LAZY_INITIALIZED_SUFFIX + " = new AtomicBoolean(false);\n" +
-                        (Multiplicity.isToOne(returnMultiplicity, false) ?
-                         "    public " + returnTypeJava + " _" + name + ";\n" :
-                         "    public RichIterable _" + name + " = Lists.mutable.empty();\n") +
-                        buildLazyProperty(property, ownerClassName + (ownerTypeParams.isEmpty() ? "" : "<" + ownerTypeParams + ">"), "this", name, returnType, unresolvedReturnType, returnMultiplicity, processorContext1.getSupport(), processorContext1), processorContext, processorSupport) +
-                ClassImplProcessor.buildQualifiedProperties(classGenericType, processorContext, processorSupport) +
-                buildLazyCopy(classGenericType, classInterfaceName, className, false, processorSupport) +
-                ClassImplProcessor.buildEquality(classGenericType, false, processorContext, processorSupport) +
-                ClassImplProcessor.buildGetFullSystemPath() +
-                //Not supported on platform classes yet
-                (ClassProcessor.isPlatformClass(_class) ? "" : ClassImplProcessor.validate(true, _class, className, classGenericType, processorContext, processorSupport.class_getSimpleProperties(_class), null, null)) +
-                "}");
+        StringBuilder sb = new StringBuilder(8192);
+        sb.append(IMPORTS);
+        if (hasQualifiers)
+        {
+            sb.append(QUALIFIER_IMPORTS);
+        }
+        sb.append(imports);
+        sb.append("public class ").append(classNamePlusTypeParams).append(" extends AbstractLazyReflectiveCoreInstance implements ").append(interfaceNamePlusTypeParams).append("\n{\n");
+        sb.append(ClassImplProcessor.buildMetaInfo(classGenericType, className, processorSupport, processorContext, true)).append("\n");
+        sb.append(buildLazyConstructor(className));
+        if (ClassProcessor.isPlatformClass(_class))
+        {
+            sb.append(buildFactory(className));
+        }
+        sb.append("\n");
+        sb.append(ClassImplProcessor.buildGetKeys());
+        sb.append(ClassImplProcessor.buildGetRealGetKeyByName());
+        if (instanceOfGetterOverride)
+        {
+            sb.append(lazyGetterOverride(interfaceNamePlusTypeParams));
+        }
+        sb.append(ClassImplProcessor.buildGetValueForMetaPropertyToOne(classGenericType, processorSupport));
+        sb.append(ClassImplProcessor.buildGetValueForMetaPropertyToMany(classGenericType, processorSupport));
+        sb.append(ClassImplProcessor.buildSimpleProperties(classGenericType, (property, name, unresolvedReturnType, returnType, returnMultiplicity, returnTypeJava, classOwnerId, ownerClassName, ownerTypeParams, processorContext1) -> "    public final AtomicBoolean _" + name + LAZY_INITIALIZED_SUFFIX + " = new AtomicBoolean(false);\n" +
+                (Multiplicity.isToOne(returnMultiplicity, false) ?
+                 "    public " + returnTypeJava + " _" + name + ";\n" :
+                 "    public RichIterable _" + name + " = Lists.mutable.empty();\n") +
+                buildLazyProperty(property, ownerClassName + (ownerTypeParams.isEmpty() ? "" : "<" + ownerTypeParams + ">"), "this", name, returnType, unresolvedReturnType, returnMultiplicity, processorContext1.getSupport(), processorContext1), processorContext, processorSupport));
+        sb.append(ClassImplProcessor.buildQualifiedProperties(classGenericType, processorContext, processorSupport));
+        sb.append(buildLazyCopy(classGenericType, classInterfaceName, className, false, processorSupport));
+        sb.append(ClassImplProcessor.buildEquality(classGenericType, false, processorContext, processorSupport));
+        sb.append(ClassImplProcessor.buildGetFullSystemPath());
+        if (!ClassProcessor.isPlatformClass(_class))
+        {
+            sb.append(ClassImplProcessor.validate(true, _class, className, classGenericType, processorContext, processorSupport.class_getSimpleProperties(_class), null, null));
+        }
+        sb.append("}");
+        return StringJavaSource.newStringJavaSource(_package, className, sb.toString());
     }
 
     static String buildFactory(String className)

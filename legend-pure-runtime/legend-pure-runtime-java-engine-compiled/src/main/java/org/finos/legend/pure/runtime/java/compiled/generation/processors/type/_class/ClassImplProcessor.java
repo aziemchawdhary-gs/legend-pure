@@ -175,72 +175,109 @@ public class ClassImplProcessor
                 .with("this")
                 .makeString("Lists.mutable.with(", ", ", ")");
 
-        return StringJavaSource.newStringJavaSource(_package, className, IMPORTS + (hasFunctions ? FUNCTION_IMPORTS : "") + (addJavaSerializationSupport ? SERIALIZABLE_IMPORTS : "") + imports +
-                "public class " + classNamePlusTypeParams + " extends " + _extends + " implements " + interfaceNamePlusTypeParams + (isGetterOverride ? ", GetterOverrideExecutor" : "") +
-                (addJavaSerializationSupport ? ", Externalizable" : "") + "\n" +
-                "{\n" +
-                (addJavaSerializationSupport ? "    static final long serialVersionUID = -1L;\n" : "") +
-                buildMetaInfo(classGenericType, className, processorSupport, processorContext, false) + "\n" +
-                (addJavaSerializationSupport ? buildDefaultConstructor(className) : "") +
-                buildSimpleConstructor(_class, className, processorSupport, useJavaInheritance) +
-                (addJavaSerializationSupport ? buildSerializationMethods(_class, processorSupport, classGenericType, pureExternalPackage) : "") +
-                (ClassProcessor.isPlatformClass(_class) ? buildFactory(className) : buildFactoryConstructor(className)) +
-                (isGetterOverride ? getterOverrides(interfaceNamePlusTypeParams) : "") +
-                buildGetClassifier() +
-                "\n" +
-                buildGetKeys() +
-                buildGetRealGetKeyByName() +
-                buildGetValueForMetaPropertyToOne(classGenericType, processorSupport) +
-                buildGetValueForMetaPropertyToMany(classGenericType, processorSupport) +
-                buildSetKeyValues(classGenericType, processorSupport) +
-                buildAddKeyValue(classGenericType, processorSupport) +
-                buildModifyValueForToManyMetaProperty(classGenericType, processorSupport) +
-                buildRemoveProperty(classGenericType, processorSupport) +
+        StringBuilder sb = new StringBuilder(8192);
+        sb.append(IMPORTS);
+        if (hasFunctions)
+        {
+            sb.append(FUNCTION_IMPORTS);
+        }
+        if (addJavaSerializationSupport)
+        {
+            sb.append(SERIALIZABLE_IMPORTS);
+        }
+        sb.append(imports);
+        sb.append("public class ").append(classNamePlusTypeParams).append(" extends ").append(_extends)
+                .append(" implements ").append(interfaceNamePlusTypeParams);
+        if (isGetterOverride)
+        {
+            sb.append(", GetterOverrideExecutor");
+        }
+        if (addJavaSerializationSupport)
+        {
+            sb.append(", Externalizable");
+        }
+        sb.append("\n{\n");
+        if (addJavaSerializationSupport)
+        {
+            sb.append("    static final long serialVersionUID = -1L;\n");
+        }
+        sb.append(buildMetaInfo(classGenericType, className, processorSupport, processorContext, false)).append("\n");
+        if (addJavaSerializationSupport)
+        {
+            sb.append(buildDefaultConstructor(className));
+        }
+        sb.append(buildSimpleConstructor(_class, className, processorSupport, useJavaInheritance));
+        if (addJavaSerializationSupport)
+        {
+            sb.append(buildSerializationMethods(_class, processorSupport, classGenericType, pureExternalPackage));
+        }
+        sb.append(ClassProcessor.isPlatformClass(_class) ? buildFactory(className) : buildFactoryConstructor(className));
+        if (isGetterOverride)
+        {
+            sb.append(getterOverrides(interfaceNamePlusTypeParams));
+        }
+        sb.append(buildGetClassifier()).append("\n");
+        sb.append(buildGetKeys());
+        sb.append(buildGetRealGetKeyByName());
+        sb.append(buildGetValueForMetaPropertyToOne(classGenericType, processorSupport));
+        sb.append(buildGetValueForMetaPropertyToMany(classGenericType, processorSupport));
+        sb.append(buildSetKeyValues(classGenericType, processorSupport));
+        sb.append(buildAddKeyValue(classGenericType, processorSupport));
+        sb.append(buildModifyValueForToManyMetaProperty(classGenericType, processorSupport));
+        sb.append(buildRemoveProperty(classGenericType, processorSupport));
+        sb.append(buildSimpleProperties(classGenericType, (property, name, unresolvedReturnType, returnType, returnMultiplicity, returnTypeJava, classOwnerId, ownerClassName, ownerTypeParams, processorContext1) ->
+        {
+            CoreInstance propertyOwner = Instance.getValueForMetaPropertyToOneResolved(property, M3Properties.owner, processorSupport);
 
-                buildSimpleProperties(classGenericType, (property, name, unresolvedReturnType, returnType, returnMultiplicity, returnTypeJava, classOwnerId, ownerClassName, ownerTypeParams, processorContext1) ->
+            StringBuilder propertySb = new StringBuilder();
+            boolean includeGettor = !useJavaInheritance || propertyOwner == _class || Instance.instanceOf(propertyOwner, associationClass, processorSupport);
+            if (includeGettor)
+            {
+                if (Multiplicity.isToOne(returnMultiplicity, false))
                 {
-                    CoreInstance propertyOwner = Instance.getValueForMetaPropertyToOneResolved(property, M3Properties.owner, processorSupport);
-
-                    String propertyString = "";
-                    boolean includeGettor = !useJavaInheritance || propertyOwner == _class || Instance.instanceOf(propertyOwner, associationClass, processorSupport);
-                    if (includeGettor)
-                    {
-
-                        propertyString += Multiplicity.isToOne(returnMultiplicity, false) ?
-                                "    public " + returnTypeJava + " _" + name + ";\n" :
-                                "    public RichIterable _" + name + " = Lists.mutable.empty();\n";
-                    }
-                    propertyString += buildProperty(property, ownerClassName + (ownerTypeParams.isEmpty() ? "" : "<" + ownerTypeParams + ">"), "this", classOwnerId, name, returnType, unresolvedReturnType, returnMultiplicity, processorContext1.getSupport(), includeGettor, processorContext1);
-                    return propertyString;
-                }, processorContext, processorSupport) +
-                buildQualifiedProperties(classGenericType, processorContext, processorSupport) +
-                buildCopy(classGenericType, CLASS_IMPL_SUFFIX, isGetterOverride, processorSupport) +
-                buildEquality(classGenericType, false, processorContext, processorSupport) +
-                buildGetFullSystemPath() +
-                //Not supported on platform classes yet
-                (ClassProcessor.isPlatformClass(_class) ? "" : validate(true, _class, className, classGenericType, processorContext, processorSupport.class_getSimpleProperties(_class), null, validateExtraValues)) +
-                (defaultValueKeys.isEmpty() ? "" :
-                        "\n" +
-                                "    @Override\n" +
-                                "    public ListIterable<String> getDefaultValueKeys()\n" +
-                                "    {\n" +
-                                "        return " + defaultValueKeys.makeString("Lists.immutable.with(\"", "\", \"", "\");\n") +
-                                "    }\n") +
-                (defaultValues.isEmpty() ? "" :
-                        "\n" +
-                                "    @Override\n" +
-                                "    public RichIterable<?> getDefaultValue(String property, ExecutionSupport es)\n" +
-                                "    {\n" +
-                                "        switch (property)\n" +
-                                "        {\n" +
-                                defaultValues.makeString("") +
-                                "            default:\n" +
-                                "            {\n" +
-                                "                return Lists.immutable.empty();\n" +
-                                "            }\n" +
-                                "        }\n" +
-                                "    }") +
-                "}");
+                    propertySb.append("    public ").append(returnTypeJava).append(" _").append(name).append(";\n");
+                }
+                else
+                {
+                    propertySb.append("    public RichIterable _").append(name).append(" = Lists.mutable.empty();\n");
+                }
+            }
+            propertySb.append(buildProperty(property, ownerClassName + (ownerTypeParams.isEmpty() ? "" : "<" + ownerTypeParams + ">"), "this", classOwnerId, name, returnType, unresolvedReturnType, returnMultiplicity, processorContext1.getSupport(), includeGettor, processorContext1));
+            return propertySb.toString();
+        }, processorContext, processorSupport));
+        sb.append(buildQualifiedProperties(classGenericType, processorContext, processorSupport));
+        sb.append(buildCopy(classGenericType, CLASS_IMPL_SUFFIX, isGetterOverride, processorSupport));
+        sb.append(buildEquality(classGenericType, false, processorContext, processorSupport));
+        sb.append(buildGetFullSystemPath());
+        if (!ClassProcessor.isPlatformClass(_class))
+        {
+            sb.append(validate(true, _class, className, classGenericType, processorContext, processorSupport.class_getSimpleProperties(_class), null, validateExtraValues));
+        }
+        if (!defaultValueKeys.isEmpty())
+        {
+            sb.append("\n    @Override\n")
+                    .append("    public ListIterable<String> getDefaultValueKeys()\n")
+                    .append("    {\n")
+                    .append("        return ").append(defaultValueKeys.makeString("Lists.immutable.with(\"", "\", \"", "\");\n"))
+                    .append("    }\n");
+        }
+        if (!defaultValues.isEmpty())
+        {
+            sb.append("\n    @Override\n")
+                    .append("    public RichIterable<?> getDefaultValue(String property, ExecutionSupport es)\n")
+                    .append("    {\n")
+                    .append("        switch (property)\n")
+                    .append("        {\n")
+                    .append(defaultValues.makeString(""))
+                    .append("            default:\n")
+                    .append("            {\n")
+                    .append("                return Lists.immutable.empty();\n")
+                    .append("            }\n")
+                    .append("        }\n")
+                    .append("    }");
+        }
+        sb.append("}");
+        return StringJavaSource.newStringJavaSource(_package, className, sb.toString());
     }
 
     private static String buildDefaultConstructor(String className)
@@ -899,52 +936,74 @@ public class ClassImplProcessor
         String typeParams = ClassProcessor.typeParameters(_class);
         String classNamePlusTypeParams = className + (typeParams.isEmpty() ? "" : "<" + typeParams + "> ");
 
-        return "    public " + classNamePlusTypeParams + " copy()\n" +
-                "    {\n" +
-                "        return new " + implClassName + "(this);\n" +
-                "    }\n" +
+        StringBuilder sb = new StringBuilder(1024);
+        sb.append("    public ").append(classNamePlusTypeParams).append(" copy()\n")
+                .append("    {\n")
+                .append("        return new ").append(implClassName).append("(this);\n")
+                .append("    }\n");
+        sb.append("    public ").append(implClassName).append("(").append(className);
+        if (!typeParams.isEmpty())
+        {
+            sb.append("<").append(typeParams).append(">");
+        }
+        sb.append(" src)\n")
+                .append("    {\n")
+                .append("        this(\"Anonymous_NoCounter\");\n")
+                .append("        this.classifier = ((").append(implClassName).append(")src).classifier;\n");
+        if (copyGetterOverride)
+        {
+            sb.append("        this.__getterOverrideToOneExec = ((").append(implClassName).append(")src).__getterOverrideToOneExec;\n")
+                    .append("        this.__getterOverrideToManyExec = ((").append(implClassName).append(")src).__getterOverrideToManyExec;\n");
+        }
+        CoreInstance associationClass = processorSupport.package_getByUserPath(M3Paths.Association);
+        processorSupport.class_getSimpleProperties(_class).forEach(property ->
+        {
+            String name = Instance.getValueForMetaPropertyToOneResolved(property, M3Properties.name, processorSupport).getName();
+            CoreInstance multiplicity = Instance.getValueForMetaPropertyToOneResolved(property, M3Properties.multiplicity, processorSupport);
 
-                "    public " + implClassName + "(" + className + (typeParams.isEmpty() ? "" : "<" + typeParams + ">") + " src)\n" +
-                "    {\n" +
-                "        this(\"Anonymous_NoCounter\");\n" +
-                "        this.classifier = ((" + implClassName + ")src).classifier;\n" +
-                (copyGetterOverride ?
-                        "        this.__getterOverrideToOneExec = ((" + implClassName + ")src).__getterOverrideToOneExec;\n" +
-                                "        this.__getterOverrideToManyExec = ((" + implClassName + ")src).__getterOverrideToManyExec;\n" : "") +
-                processorSupport.class_getSimpleProperties(_class).collect(property ->
+            CoreInstance propertyOwner = Instance.getValueForMetaPropertyToOneResolved(property, M3Properties.owner, processorSupport);
+            String reversePropertyName = null;
+            if (Instance.instanceOf(propertyOwner, associationClass, processorSupport))
+            {
+                ListIterable<? extends CoreInstance> associationProperties = Instance.getValueForMetaPropertyToManyResolved(propertyOwner, M3Properties.properties, processorSupport);
+                CoreInstance reverseProperty = associationProperties.get(property == associationProperties.get(0) ? 1 : 0);
+                reversePropertyName = Property.getPropertyName(reverseProperty);
+            }
+
+            CoreInstance returnType = ClassProcessor.getPropertyResolvedReturnType(classGenericType, property, processorSupport);
+            String typeObject = TypeProcessor.typeToJavaObjectSingle(returnType, true, processorSupport);
+
+            boolean isToOne = Multiplicity.isToOne(multiplicity, false);
+            sb.append("        this._").append(name).append(" = ");
+            if (isToOne)
+            {
+                sb.append("(").append(typeObject).append(")((").append(implClassName).append(")src)._").append(name);
+            }
+            else
+            {
+                sb.append("Lists.mutable.ofAll(((").append(implClassName).append(")src)._").append(name).append(")");
+            }
+            sb.append(";\n");
+            if (reversePropertyName != null)
+            {
+                if (isToOne)
                 {
-                    String name = Instance.getValueForMetaPropertyToOneResolved(property, M3Properties.name, processorSupport).getName();
-                    CoreInstance multiplicity = Instance.getValueForMetaPropertyToOneResolved(property, M3Properties.multiplicity, processorSupport);
-
-                    CoreInstance associationClass = processorSupport.package_getByUserPath(M3Paths.Association);
-                    CoreInstance propertyOwner = Instance.getValueForMetaPropertyToOneResolved(property, M3Properties.owner, processorSupport);
-                    String reversePropertyName = null;
-                    if (Instance.instanceOf(propertyOwner, associationClass, processorSupport))
-                    {
-                        ListIterable<? extends CoreInstance> associationProperties = Instance.getValueForMetaPropertyToManyResolved(propertyOwner, M3Properties.properties, processorSupport);
-                        CoreInstance reverseProperty = associationProperties.get(property == associationProperties.get(0) ? 1 : 0);
-                        reversePropertyName = Property.getPropertyName(reverseProperty);
-                    }
-
-                    CoreInstance returnType = ClassProcessor.getPropertyResolvedReturnType(classGenericType, property, processorSupport);
-                    String typeObject = TypeProcessor.typeToJavaObjectSingle(returnType, true, processorSupport);
-
-                    boolean isToOne = Multiplicity.isToOne(multiplicity, false);
-                    return "        this._" + name + " = " + (isToOne ? "(" + typeObject + ")((" + implClassName + ")src)._" + name : "Lists.mutable.ofAll(((" + implClassName + ")src)._" + name + ")") + ";\n" +
-                            (reversePropertyName == null ? "" :
-                                    isToOne ?
-                                            "        if (this._" + name + " != null)\n" +
-                                                    "        {\n" +
-                                                    "            this._" + name + "._reverse_" + reversePropertyName + "(this);\n" +
-                                                    "        }\n"
-                                            :
-                                            "        for (" + typeObject + " v : (RichIterable<? extends " + typeObject + ">) this._" + name + ")\n" +
-                                                    "        {\n" +
-                                                    "            v._reverse_" + reversePropertyName + "(this);\n" +
-                                                    "        }\n");
-                }).makeString("") +
-                "    }\n";
-
+                    sb.append("        if (this._").append(name).append(" != null)\n")
+                            .append("        {\n")
+                            .append("            this._").append(name).append("._reverse_").append(reversePropertyName).append("(this);\n")
+                            .append("        }\n");
+                }
+                else
+                {
+                    sb.append("        for (").append(typeObject).append(" v : (RichIterable<? extends ").append(typeObject).append(">) this._").append(name).append(")\n")
+                            .append("        {\n")
+                            .append("            v._reverse_").append(reversePropertyName).append("(this);\n")
+                            .append("        }\n");
+                }
+            }
+        });
+        sb.append("    }\n");
+        return sb.toString();
     }
 
     static String buildEquality(CoreInstance classGenericType, boolean useMethodForHashcode, ProcessorContext processorContext, ProcessorSupport processorSupport)
@@ -959,36 +1018,47 @@ public class ClassImplProcessor
         }
         equalityProperties.sortThisBy(CoreInstance::getName);
 
-        return "    public boolean pureEquals(Object o)\n" +
-                "    {\n" +
-                "        if (this == o)\n" +
-                "        {\n" +
-                "            return true;\n" +
-                "        }\n" +
-                "        if (!(o instanceof " + className + "))\n" +
-                "        {\n" +
-                "            return false;\n" +
-                "        }\n" +
-                "        " + className + " that = (" + className + ")o;\n" +
-                "        return this.getFullSystemPath().equals(that.getFullSystemPath())" +
-                equalityProperties.collect(property ->
-                {
-                    CoreInstance functionType = processorSupport.function_getFunctionType(property);
-                    CoreInstance returnType = Instance.getValueForMetaPropertyToOneResolved(functionType, M3Properties.returnType, M3Properties.rawType, processorSupport);
-                    CoreInstance returnMultiplicity = Instance.getValueForMetaPropertyToOneResolved(functionType, M3Properties.returnMultiplicity, processorSupport);
-                    return ((returnType != null) &&
-                            Multiplicity.isToOne(returnMultiplicity, true) &&
-                            Lists.immutable.with(M3Paths.Boolean, M3Paths.Float, M3Paths.Integer).contains(PackageableElement.getUserPathForPackageableElement(returnType))) ?
-                           // Java primitive
-                           " &&\n                this._" + property.getName() + "() == that._" + property.getName() + "()" :
-                           " &&\n                CompiledSupport.equal(this._" + property.getName() + "(), that._" + property.getName() + "())";
-                }).makeString("") + ";\n" +
-                "    }\n" +
-                "\n" +
-                "    public int pureHashCode()\n" +
-                "    {\n" +
-                equalityProperties.collect(property -> "CompiledSupport.safeHashCode(this._" + property.getName() + (useMethodForHashcode ? "()" : "") + ")").makeString("        int result = ", ";\n        result = 31 * result + ", ";\n        return result;\n") +
-                "    }\n";
+        StringBuilder sb = new StringBuilder(512);
+        sb.append("    public boolean pureEquals(Object o)\n")
+                .append("    {\n")
+                .append("        if (this == o)\n        {\n            return true;\n        }\n")
+                .append("        if (!(o instanceof ").append(className).append("))\n        {\n            return false;\n        }\n")
+                .append("        ").append(className).append(" that = (").append(className).append(")o;\n")
+                .append("        return this.getFullSystemPath().equals(that.getFullSystemPath())");
+        for (CoreInstance property : equalityProperties)
+        {
+            CoreInstance functionType = processorSupport.function_getFunctionType(property);
+            CoreInstance returnType = Instance.getValueForMetaPropertyToOneResolved(functionType, M3Properties.returnType, M3Properties.rawType, processorSupport);
+            CoreInstance returnMultiplicity = Instance.getValueForMetaPropertyToOneResolved(functionType, M3Properties.returnMultiplicity, processorSupport);
+            String propName = property.getName();
+            if (returnType != null &&
+                    Multiplicity.isToOne(returnMultiplicity, true) &&
+                    Lists.immutable.with(M3Paths.Boolean, M3Paths.Float, M3Paths.Integer).contains(PackageableElement.getUserPathForPackageableElement(returnType)))
+            {
+                sb.append(" &&\n                this._").append(propName).append("() == that._").append(propName).append("()");
+            }
+            else
+            {
+                sb.append(" &&\n                CompiledSupport.equal(this._").append(propName).append("(), that._").append(propName).append("())");
+            }
+        }
+        sb.append(";\n    }\n\n");
+
+        sb.append("    public int pureHashCode()\n    {\n");
+        for (int i = 0; i < equalityProperties.size(); i++)
+        {
+            String propName = equalityProperties.get(i).getName();
+            if (i == 0)
+            {
+                sb.append("        int result = CompiledSupport.safeHashCode(this._").append(propName).append(useMethodForHashcode ? "()" : "").append(");\n");
+            }
+            else
+            {
+                sb.append("        result = 31 * result + CompiledSupport.safeHashCode(this._").append(propName).append(useMethodForHashcode ? "()" : "").append(");\n");
+            }
+        }
+        sb.append("        return result;\n    }\n");
+        return sb.toString();
     }
 
     public static String buildPropertyStandardWriteSeverReverseToOne(String name, String owner, String typePrimitive, boolean isPrimitive, boolean setCachedOrMutated)
@@ -1011,10 +1081,12 @@ public class ClassImplProcessor
 
     public static String buildPropertyStandardWriteToOneBuilders(CoreInstance property, CoreInstance propertyReturnGenericType, String name, String owner, String className, String typeObject, String defaultValue, String reversePropertyName, String typePrimitive, boolean setCachedOrMutated, ProcessorContext processorContext)
     {
-        return buildPropertyToOneSetOne(name, owner, className, reversePropertyName, typePrimitive, setCachedOrMutated) +
-                buildPropertyToOneSetMany(name, className, typeObject) +
-                buildPropertyToOneRemove(name, owner, className, defaultValue, setCachedOrMutated) +
-                buildPropertyToOneSetterCoreInstance(property, propertyReturnGenericType, className, name, processorContext);
+        StringBuilder sb = new StringBuilder(512);
+        sb.append(buildPropertyToOneSetOne(name, owner, className, reversePropertyName, typePrimitive, setCachedOrMutated));
+        sb.append(buildPropertyToOneSetMany(name, className, typeObject));
+        sb.append(buildPropertyToOneRemove(name, owner, className, defaultValue, setCachedOrMutated));
+        sb.append(buildPropertyToOneSetterCoreInstance(property, propertyReturnGenericType, className, name, processorContext));
+        return sb.toString();
     }
 
     private static String buildPropertyToOneSetOne(String name, String owner, String className, String reversePropertyName, String typePrimitive, boolean setCachedOrMutated)
@@ -1079,83 +1151,97 @@ public class ClassImplProcessor
 
     public static String buildPropertyStandardWriteToManyBuilders(CoreInstance property, CoreInstance propertyReturnGenericType, String name, String owner, String className, String typeObject, String reversePropertyName, String typePrimitive, CoreInstance rawType, boolean setCachedOrMutated, ProcessorSupport processorSupport, ProcessorContext processorContext)
     {
-        return "    private " + className + " _" + name + "(" + typePrimitive + " val, boolean add)\n" +
-                "    {\n" +
-                (setCachedOrMutated ? "        " + owner + "._" + name + "();\n" : "") +
-                (rawType == null ? "if(val instanceof RichIterable){_" + name + "((RichIterable<? extends " + typeObject + ">)val, add);}else{" : "") +
-                (rawType != null && !processorSupport.type_isPrimitiveType(rawType) ? "        if (val == null)\n" +
-                        "        {\n" +
-                        "            if (!add)\n" +
-                        "            {\n" +
-                        (reversePropertyName == null ? "" :
-                                "                for (" + typeObject + " v : (RichIterable<? extends " + typeObject + ">) " + owner + "._" + name + ")\n" +
-                                        "                {\n" +
-                                        "                    v._sever_reverse_" + reversePropertyName + "(" + owner + ");\n" +
-                                        "                }\n") +
-                        "                " + owner + "._" + name + " = Lists.mutable.empty();\n" +
-                        "            }\n" +
-                        "            return this;\n" +
-                        "        }\n" : "") +
-                "        if (add)\n" +
-                "        {\n" +
-                "            if (!(" + owner + "._" + name + " instanceof MutableList))\n" +
-                "            {\n" +
-                "                " + owner + "._" + name + " = " + owner + "._" + name + ".toList();\n" +
-                "            }\n" +
-                "            ((MutableList)" + owner + "._" + name + ").add(val);\n" +
-                "        }\n" +
-                "        else\n" +
-                "        {\n" +
-                (reversePropertyName == null ? "" :
-                        "            for (" + typeObject + " v : (RichIterable<? extends " + typeObject + ">) " + owner + "._" + name + ")\n" +
-                                "            {\n" +
-                                "                v._sever_reverse_" + reversePropertyName + "(" + owner + ");\n" +
-                                "            }\n") +
-                "            " + owner + "._" + name + " = (val == null ? Lists.mutable.empty() : Lists.mutable.with(val));\n" +
-                "        }\n" +
-                (reversePropertyName == null ? "" : "        val._reverse_" + reversePropertyName + "(" + owner + ");\n") +
-                (rawType == null ? "}" : "") +
-                "        return this;\n" +
-                "    }\n" +
-                "\n" +
-                "    private " + className + " _" + name + "(RichIterable<? extends " + typeObject + "> val, boolean add)\n" +
-                "    {\n" +
-                (setCachedOrMutated ? "        " + owner + "._" + name + "();\n" : "") +
-                "        if (add)\n" +
-                "        {\n" +
-                "            if (!(" + owner + "._" + name + " instanceof MutableList))\n" +
-                "            {\n" +
-                "                " + owner + "._" + name + " = " + owner + "._" + name + ".toList();\n" +
-                "            }\n" +
-                "            ((MutableList)" + owner + "._" + name + ").addAllIterable(val);\n" +
-                "        }\n" +
-                "        else\n" +
-                "        {\n" +
-                (reversePropertyName == null ? "" :
-                        "            for (" + typeObject + " v : (RichIterable<? extends " + typeObject + ">) " + owner + "._" + name + ")\n" +
-                                "            {\n" +
-                                "                v._sever_reverse_" + reversePropertyName + "(" + owner + ");\n" +
-                                "            }\n") +
-                "            " + owner + "._" + name + " = val;\n" +
-                "        }\n" +
-                (reversePropertyName == null ? "" :
-                        "        for (" + typeObject + " v : val)\n" +
-                                "        {\n" +
-                                "            v._reverse_" + reversePropertyName + "(" + owner + ");\n" +
-                                "        }\n") +
-                "        return this;\n" +
-                "    }\n" +
-                "\n" +
-                buildPropertyToManySetter(name, owner, className, typeObject) +
-                buildPropertyToManyAdd(name, owner, className, typeObject) +
-                buildPropertyToManyAddAll(name, owner, className, typeObject) +
-                buildPropertyToManyRemove(name, owner, className, setCachedOrMutated) +
-                buildPropertyToManyRemoveItem(name, owner, className, typeObject, setCachedOrMutated) +
-                (processorContext.getGenerator().isStubType(property, propertyReturnGenericType) ?
-                        buildPropertyToManyAddCoreInstance(name, owner, className) +
-                                buildPropertyToManyAddAllCoreInstance(name, owner, className) +
-                                buildPropertyToManySetterCoreInstance(className, name) +
-                                buildPropertyToManyRemoveItemCoreInstance(className, name) : "");
+        StringBuilder sb = new StringBuilder(2048);
+        sb.append("    private ").append(className).append(" _").append(name).append("(").append(typePrimitive).append(" val, boolean add)\n    {\n");
+        if (setCachedOrMutated)
+        {
+            sb.append("        ").append(owner).append("._").append(name).append("();\n");
+        }
+        if (rawType == null)
+        {
+            sb.append("if(val instanceof RichIterable){_").append(name).append("((RichIterable<? extends ").append(typeObject).append(">)val, add);}else{");
+        }
+        if (rawType != null && !processorSupport.type_isPrimitiveType(rawType))
+        {
+            sb.append("        if (val == null)\n        {\n            if (!add)\n            {\n");
+            if (reversePropertyName != null)
+            {
+                sb.append("                for (").append(typeObject).append(" v : (RichIterable<? extends ").append(typeObject).append(">) ").append(owner).append("._").append(name).append(")\n")
+                        .append("                {\n")
+                        .append("                    v._sever_reverse_").append(reversePropertyName).append("(").append(owner).append(");\n")
+                        .append("                }\n");
+            }
+            sb.append("                ").append(owner).append("._").append(name).append(" = Lists.mutable.empty();\n")
+                    .append("            }\n            return this;\n        }\n");
+        }
+        sb.append("        if (add)\n        {\n")
+                .append("            if (!(").append(owner).append("._").append(name).append(" instanceof MutableList))\n            {\n")
+                .append("                ").append(owner).append("._").append(name).append(" = ").append(owner).append("._").append(name).append(".toList();\n")
+                .append("            }\n")
+                .append("            ((MutableList)").append(owner).append("._").append(name).append(").add(val);\n")
+                .append("        }\n        else\n        {\n");
+        if (reversePropertyName != null)
+        {
+            sb.append("            for (").append(typeObject).append(" v : (RichIterable<? extends ").append(typeObject).append(">) ").append(owner).append("._").append(name).append(")\n")
+                    .append("            {\n")
+                    .append("                v._sever_reverse_").append(reversePropertyName).append("(").append(owner).append(");\n")
+                    .append("            }\n");
+        }
+        sb.append("            ").append(owner).append("._").append(name).append(" = (val == null ? Lists.mutable.empty() : Lists.mutable.with(val));\n")
+                .append("        }\n");
+        if (reversePropertyName != null)
+        {
+            sb.append("        val._reverse_").append(reversePropertyName).append("(").append(owner).append(");\n");
+        }
+        if (rawType == null)
+        {
+            sb.append("}");
+        }
+        sb.append("        return this;\n    }\n\n");
+
+        // Second method: RichIterable variant
+        sb.append("    private ").append(className).append(" _").append(name).append("(RichIterable<? extends ").append(typeObject).append("> val, boolean add)\n    {\n");
+        if (setCachedOrMutated)
+        {
+            sb.append("        ").append(owner).append("._").append(name).append("();\n");
+        }
+        sb.append("        if (add)\n        {\n")
+                .append("            if (!(").append(owner).append("._").append(name).append(" instanceof MutableList))\n            {\n")
+                .append("                ").append(owner).append("._").append(name).append(" = ").append(owner).append("._").append(name).append(".toList();\n")
+                .append("            }\n")
+                .append("            ((MutableList)").append(owner).append("._").append(name).append(").addAllIterable(val);\n")
+                .append("        }\n        else\n        {\n");
+        if (reversePropertyName != null)
+        {
+            sb.append("            for (").append(typeObject).append(" v : (RichIterable<? extends ").append(typeObject).append(">) ").append(owner).append("._").append(name).append(")\n")
+                    .append("            {\n")
+                    .append("                v._sever_reverse_").append(reversePropertyName).append("(").append(owner).append(");\n")
+                    .append("            }\n");
+        }
+        sb.append("            ").append(owner).append("._").append(name).append(" = val;\n")
+                .append("        }\n");
+        if (reversePropertyName != null)
+        {
+            sb.append("        for (").append(typeObject).append(" v : val)\n")
+                    .append("        {\n")
+                    .append("            v._reverse_").append(reversePropertyName).append("(").append(owner).append(");\n")
+                    .append("        }\n");
+        }
+        sb.append("        return this;\n    }\n\n");
+
+        sb.append(buildPropertyToManySetter(name, owner, className, typeObject));
+        sb.append(buildPropertyToManyAdd(name, owner, className, typeObject));
+        sb.append(buildPropertyToManyAddAll(name, owner, className, typeObject));
+        sb.append(buildPropertyToManyRemove(name, owner, className, setCachedOrMutated));
+        sb.append(buildPropertyToManyRemoveItem(name, owner, className, typeObject, setCachedOrMutated));
+        if (processorContext.getGenerator().isStubType(property, propertyReturnGenericType))
+        {
+            sb.append(buildPropertyToManyAddCoreInstance(name, owner, className));
+            sb.append(buildPropertyToManyAddAllCoreInstance(name, owner, className));
+            sb.append(buildPropertyToManySetterCoreInstance(className, name));
+            sb.append(buildPropertyToManyRemoveItemCoreInstance(className, name));
+        }
+        return sb.toString();
     }
 
     private static String buildPropertyToManySetter(String name, String owner, String className, String typeObject)
@@ -1230,32 +1316,33 @@ public class ClassImplProcessor
         boolean isDataType = rawType != null && Instance.instanceOf(rawType, M3Paths.DataType, processorSupport);
         boolean isPrimitive = rawType != null && Instance.instanceOf(rawType, M3Paths.PrimitiveType, processorSupport);
         boolean makePrimitiveIfPossible = GenericType.isGenericTypeConcrete(unresolvedReturnType) && Multiplicity.isToOne(multiplicity, true);
-//        boolean isFromAssociation = Instance.instanceOf(Instance.getValueForMetaPropertyToOneResolved(property, M3Properties.owner, processorSupport), M3Paths.Association, processorSupport);
 
         String typePrimitive = TypeProcessor.pureTypeToJava(returnType, true, makePrimitiveIfPossible, processorSupport);
         String typeObject = TypeProcessor.pureTypeToJava(returnType, true, false, processorSupport);
         String defaultValue = TypeProcessor.defaultValue(rawType);
 
+        StringBuilder sb = new StringBuilder(1024);
         if (Multiplicity.isToOne(multiplicity, false))
         {
-            //always include the reverse setter - possible that the Association is defined for a super-class, and the association-end
-            // was overridden at the concrete class level.  In this case, the reverse needs to exist due to the super-class interface,
-            // it just won't be called.
-            return buildPropertyStandardWriteToOneBuilders(property, returnType, name, owner, className, typeObject, defaultValue, reversePropertyName, typePrimitive, false, processorContext) +
-                    (includeGettor ? buildPropertyStandardWriteSeverReverseToOne(name, owner, typePrimitive, isPrimitive, false) +
-                            buildPropertyToOneGetterCoreInstance(property, returnType, name, processorContext) +
-                            buildPropertyToOneGetter(owner, classOwnerId, name, isOverrider, isClassifierGenericType, isDataType, typePrimitive) : "");
+            sb.append(buildPropertyStandardWriteToOneBuilders(property, returnType, name, owner, className, typeObject, defaultValue, reversePropertyName, typePrimitive, false, processorContext));
+            if (includeGettor)
+            {
+                sb.append(buildPropertyStandardWriteSeverReverseToOne(name, owner, typePrimitive, isPrimitive, false));
+                sb.append(buildPropertyToOneGetterCoreInstance(property, returnType, name, processorContext));
+                sb.append(buildPropertyToOneGetter(owner, classOwnerId, name, isOverrider, isClassifierGenericType, isDataType, typePrimitive));
+            }
         }
         else
         {
-            //always include the reverse setter - possible that the Association is defined for a super-class, and the association-end
-            // was overridden at the concrete class level.  In this case, the reverse needs to exist due to the super-class interface,
-            // it just won't be called.
-            return buildPropertyStandardWriteToManyBuilders(property, returnType, name, owner, className, typeObject, reversePropertyName, typePrimitive, rawType, false, processorSupport, processorContext) +
-                    (includeGettor ? buildPropertyStandardSeverReverseToMany(name, owner, typePrimitive, isPrimitive, false) +
-                            buildPropertyToManyGetter(owner, classOwnerId, name, isOverrider, isClassifierGenericType, isDataType, typePrimitive) : "") +
-                    buildPropertyToManyGetterCoreInstance(property, returnType, name, processorContext);
+            sb.append(buildPropertyStandardWriteToManyBuilders(property, returnType, name, owner, className, typeObject, reversePropertyName, typePrimitive, rawType, false, processorSupport, processorContext));
+            if (includeGettor)
+            {
+                sb.append(buildPropertyStandardSeverReverseToMany(name, owner, typePrimitive, isPrimitive, false));
+                sb.append(buildPropertyToManyGetter(owner, classOwnerId, name, isOverrider, isClassifierGenericType, isDataType, typePrimitive));
+            }
+            sb.append(buildPropertyToManyGetterCoreInstance(property, returnType, name, processorContext));
         }
+        return sb.toString();
     }
 
     private static String buildPropertyToManyGetter(String owner, String classOwnerId, String name, boolean isOverrider, boolean isClassifierGenericType, boolean isDataType, String typeObject)
@@ -1370,60 +1457,76 @@ public class ClassImplProcessor
     {
         ProcessorSupport processorSupport = processorContext.getSupport();
         ListIterable<CoreInstance> allConstraints = _Class.computeConstraintsInHierarchy(_class, processorSupport);
+        StringBuilder sb = new StringBuilder(1024);
         StringBuilder validateItems = new StringBuilder();
-        String validate =         "    public " + (stateAndDeep ? "" : "static ") + className + " _validate(" + (stateAndDeep ? "boolean goDeep," : "") + (extraParameters == null ? "" : extraParameters + ",") + " SourceInformation sourceInformation, final ExecutionSupport es)\n" +
-                        "    {\n" +
-                        (stateAndDeep ? "        if (!this.hasCompileState(CompiledSupport.CONSTRAINTS_VALIDATED))\n" +
-                                "        {\n" : "") +
-                        allConstraints.collectWithIndex((constraint, index) ->
-                        {
-                            CoreInstance owner = Instance.getValueForMetaPropertyToOneResolved(constraint, M3Properties.owner, processorSupport);
-                            if (owner == null || "Global".equals(owner.getName()))
-                            {
-                                validateItems.append(validateItem(stateAndDeep, constraint, _class, processorContext, index)).append("\n");
-                                return  "            _validate_" + index + "(" + (extraValues == null ? "Lists.mutable.with(this)" : extraValues) + ", sourceInformation, es);\n";
-                            }
-                            else
-                            {
-                                return "";
-                            }
-                        }).makeString("") +
-                        (stateAndDeep ? "            this.addCompileState(CompiledSupport.CONSTRAINTS_VALIDATED);\n" +
-                                "            if (goDeep)\n" +
-                                "            {\n" : "") +
-                        properties.toSortedListBy(Property::getPropertyName).collect(property ->
-                        {
-                            CoreInstance returnType = ClassProcessor.getPropertyResolvedReturnType(classGenericType, property, processorSupport);
-                            CoreInstance rawType = Instance.getValueForMetaPropertyToOneResolved(returnType, M3Properties.rawType, processorSupport);
-                            if (rawType != null && !Instance.instanceOf(rawType, M3Paths.DataType, processorSupport) && !ClassProcessor.isPlatformClass(rawType))
-                            {
-                                String name = Instance.getValueForMetaPropertyToOneResolved(property, M3Properties.name, processorSupport).getName();
-                                CoreInstance returnMultiplicity = Instance.getValueForMetaPropertyToOneResolved(property, M3Properties.multiplicity, processorSupport);
-                                if (Multiplicity.isToOne(returnMultiplicity, false))
-                                {
-                                    return
-                                            "                if (this._" + name + "() != null)\n" +
-                                                    "                {\n" +
-                                                    "                    this._" + name + "()._validate(goDeep, sourceInformation, es);\n" +
-                                                    "                }\n";
-                                }
-                                else
-                                {
-                                    String returnTypeJava = TypeProcessor.pureTypeToJava(returnType, true, false, processorSupport);
-                                    return
-                                            "                for (" + returnTypeJava + " o : this._" + name + "())\n" +
-                                                    "                {\n" +
-                                                    "                    o._validate(goDeep, sourceInformation, es);\n" +
-                                                    "                }\n";
-                                }
-                            }
-                            return "";
-                        }).makeString("") +
-                        (stateAndDeep ? "            }\n" +
-                                "        }\n" : "") +
-                        "        return " + (stateAndDeep ? "this" : "null") + ";\n" +
-                        "    }\n";
-        return validate + validateItems;
+
+        sb.append("    public ");
+        if (!stateAndDeep)
+        {
+            sb.append("static ");
+        }
+        sb.append(className).append(" _validate(");
+        if (stateAndDeep)
+        {
+            sb.append("boolean goDeep,");
+        }
+        if (extraParameters != null)
+        {
+            sb.append(extraParameters).append(",");
+        }
+        sb.append(" SourceInformation sourceInformation, final ExecutionSupport es)\n    {\n");
+        if (stateAndDeep)
+        {
+            sb.append("        if (!this.hasCompileState(CompiledSupport.CONSTRAINTS_VALIDATED))\n        {\n");
+        }
+        allConstraints.forEachWithIndex((constraint, index) ->
+        {
+            CoreInstance owner = Instance.getValueForMetaPropertyToOneResolved(constraint, M3Properties.owner, processorSupport);
+            if (owner == null || "Global".equals(owner.getName()))
+            {
+                validateItems.append(validateItem(stateAndDeep, constraint, _class, processorContext, index)).append("\n");
+                sb.append("            _validate_").append(index).append("(")
+                        .append(extraValues == null ? "Lists.mutable.with(this)" : extraValues)
+                        .append(", sourceInformation, es);\n");
+            }
+        });
+        if (stateAndDeep)
+        {
+            sb.append("            this.addCompileState(CompiledSupport.CONSTRAINTS_VALIDATED);\n")
+                    .append("            if (goDeep)\n            {\n");
+        }
+        properties.toSortedListBy(Property::getPropertyName).forEach(property ->
+        {
+            CoreInstance returnType = ClassProcessor.getPropertyResolvedReturnType(classGenericType, property, processorSupport);
+            CoreInstance rawType = Instance.getValueForMetaPropertyToOneResolved(returnType, M3Properties.rawType, processorSupport);
+            if (rawType != null && !Instance.instanceOf(rawType, M3Paths.DataType, processorSupport) && !ClassProcessor.isPlatformClass(rawType))
+            {
+                String name = Instance.getValueForMetaPropertyToOneResolved(property, M3Properties.name, processorSupport).getName();
+                CoreInstance returnMultiplicity = Instance.getValueForMetaPropertyToOneResolved(property, M3Properties.multiplicity, processorSupport);
+                if (Multiplicity.isToOne(returnMultiplicity, false))
+                {
+                    sb.append("                if (this._").append(name).append("() != null)\n")
+                            .append("                {\n")
+                            .append("                    this._").append(name).append("()._validate(goDeep, sourceInformation, es);\n")
+                            .append("                }\n");
+                }
+                else
+                {
+                    String returnTypeJava = TypeProcessor.pureTypeToJava(returnType, true, false, processorSupport);
+                    sb.append("                for (").append(returnTypeJava).append(" o : this._").append(name).append("())\n")
+                            .append("                {\n")
+                            .append("                    o._validate(goDeep, sourceInformation, es);\n")
+                            .append("                }\n");
+                }
+            }
+        });
+        if (stateAndDeep)
+        {
+            sb.append("            }\n        }\n");
+        }
+        sb.append("        return ").append(stateAndDeep ? "this" : "null").append(";\n    }\n");
+        sb.append(validateItems);
+        return sb.toString();
     }
 
     private static String validateItem(boolean stateAndDeep, CoreInstance constraint, CoreInstance _class, ProcessorContext processorContext, int constraintIndex)
@@ -1544,30 +1647,31 @@ public class ClassImplProcessor
 
         // Build copy method that returns _OverrideImpl
         String classNamePlusTypeParams = interfaceName + (typeParams.isEmpty() ? "" : "<" + typeParams + "> ");
-        String overrideCopy =
-                "    @Override\n" +
-                "    public " + classNamePlusTypeParams + " copy()\n" +
-                "    {\n" +
-                "        return new " + overrideClassName + "(this);\n" +
-                "    }\n";
 
-        return StringJavaSource.newStringJavaSource(_package, overrideClassName, IMPORTS + imports +
-                "public class " + overrideClassNamePlusTypeParams + " extends " + implClassName + typeParamsString + "\n" +
-                "{\n" +
-                "    public " + overrideClassName + "(String id)\n" +
-                "    {\n" +
-                "        super(id);\n" +
-                "    }\n" +
-                "\n" +
-                "    public " + overrideClassName + "(" + interfaceName + (typeParams.isEmpty() ? "" : "<" + typeParams + ">") + " src)\n" +
-                "    {\n" +
-                "        super(src);\n" +
-                "    }\n" +
-                "\n" +
-                overrideCopy +
-                "\n" +
-                overrideGetters +
-                "}");
+        StringBuilder sb = new StringBuilder(4096);
+        sb.append(IMPORTS).append(imports);
+        sb.append("public class ").append(overrideClassNamePlusTypeParams).append(" extends ").append(implClassName).append(typeParamsString).append("\n{\n");
+        sb.append("    public ").append(overrideClassName).append("(String id)\n")
+                .append("    {\n")
+                .append("        super(id);\n")
+                .append("    }\n\n");
+        sb.append("    public ").append(overrideClassName).append("(").append(interfaceName);
+        if (!typeParams.isEmpty())
+        {
+            sb.append("<").append(typeParams).append(">");
+        }
+        sb.append(" src)\n")
+                .append("    {\n")
+                .append("        super(src);\n")
+                .append("    }\n\n");
+        sb.append("    @Override\n")
+                .append("    public ").append(classNamePlusTypeParams).append(" copy()\n")
+                .append("    {\n")
+                .append("        return new ").append(overrideClassName).append("(this);\n")
+                .append("    }\n\n");
+        sb.append(overrideGetters);
+        sb.append("}");
+        return StringJavaSource.newStringJavaSource(_package, overrideClassName, sb.toString());
     }
 
     private static String buildOverridePropertyToOneGetter(String classOwnerId, String name, String typeObject)

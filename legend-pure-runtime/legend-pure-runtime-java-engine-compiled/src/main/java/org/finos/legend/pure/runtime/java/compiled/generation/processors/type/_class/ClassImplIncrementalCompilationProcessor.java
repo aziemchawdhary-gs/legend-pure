@@ -51,16 +51,22 @@ public class ClassImplIncrementalCompilationProcessor
         String interfaceName = TypeProcessor.javaInterfaceForType(_class, processorSupport);
         boolean specialEquals = !_Class.getEqualityKeyProperties(_class, processorContext.getSupport()).isEmpty();
 
-        return StringJavaSource.newStringJavaSource(_package, className, ClassImplProcessor.IMPORTS + ClassImplProcessor.FUNCTION_IMPORTS + imports +
-                "import org.finos.legend.pure.m3.coreinstance.BaseM3CoreInstanceFactory;\n" +
-                "public class " + classNamePlusTypeParams + " extends " + _extends + (specialEquals ? " implements org.finos.legend.pure.runtime.java.compiled.generation.processors.support.coreinstance.JavaCompiledCoreInstance" : "") + "\n" +
-                "{\n" +
-                M3ToJavaGenerator.createClassFactory(className, systemPath) +
-                createClassConstructors(className) +
-                ClassImplProcessor.buildQualifiedProperties(classGenericType, processorContext, processorSupport) +
-                M3ToJavaGenerator.createClassCopyMethod(className, interfaceName + M3ToJavaGenerator.getTypeParams(_class, true)) +
-                ClassImplProcessor.buildEquality(classGenericType, true, processorContext, processorSupport) +
-                "}");
+        StringBuilder sb = new StringBuilder(4096);
+        sb.append(ClassImplProcessor.IMPORTS).append(ClassImplProcessor.FUNCTION_IMPORTS).append(imports);
+        sb.append("import org.finos.legend.pure.m3.coreinstance.BaseM3CoreInstanceFactory;\n");
+        sb.append("public class ").append(classNamePlusTypeParams).append(" extends ").append(_extends);
+        if (specialEquals)
+        {
+            sb.append(" implements org.finos.legend.pure.runtime.java.compiled.generation.processors.support.coreinstance.JavaCompiledCoreInstance");
+        }
+        sb.append("\n{\n");
+        sb.append(M3ToJavaGenerator.createClassFactory(className, systemPath));
+        sb.append(createClassConstructors(className));
+        sb.append(ClassImplProcessor.buildQualifiedProperties(classGenericType, processorContext, processorSupport));
+        sb.append(M3ToJavaGenerator.createClassCopyMethod(className, interfaceName + M3ToJavaGenerator.getTypeParams(_class, true)));
+        sb.append(ClassImplProcessor.buildEquality(classGenericType, true, processorContext, processorSupport));
+        sb.append("}");
+        return StringJavaSource.newStringJavaSource(_package, className, sb.toString());
     }
 
     public static String createClassConstructors(String className)
