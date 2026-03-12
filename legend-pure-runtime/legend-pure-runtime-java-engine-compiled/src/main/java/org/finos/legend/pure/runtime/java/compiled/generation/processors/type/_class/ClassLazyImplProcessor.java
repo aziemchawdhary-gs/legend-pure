@@ -47,13 +47,76 @@ public class ClassLazyImplProcessor
             "import org.finos.legend.pure.m4.coreinstance.SourceInformation;\n" +
             "import org.finos.legend.pure.m4.coreinstance.factory.CoreInstanceFactory;\n" +
             "import org.finos.legend.pure.runtime.java.compiled.metadata.MetadataLazy;\n" +
-            "import org.finos.legend.pure.runtime.java.compiled.execution.*;\n" +
-            "import org.finos.legend.pure.runtime.java.compiled.execution.sourceInformation.*;\n" +
-            "import org.finos.legend.pure.runtime.java.compiled.generation.processors.support.*;\n" +
-            "import org.finos.legend.pure.runtime.java.compiled.generation.processors.support.coreinstance.*;\n" +
-            "import org.finos.legend.pure.runtime.java.compiled.generation.processors.support.function.*;\n" +
-            "import org.finos.legend.pure.runtime.java.compiled.generation.processors.support.function.defended.*;\n" +
-            "import org.finos.legend.pure.runtime.java.compiled.serialization.model.*;\n";
+            "import org.finos.legend.pure.runtime.java.compiled.execution.CompiledExecutionSupport;\n" +
+            "import org.finos.legend.pure.runtime.java.compiled.execution.CompiledProcessorSupport;\n" +
+            "import org.finos.legend.pure.runtime.java.compiled.execution.ConsoleCompiled;\n" +
+            "import org.finos.legend.pure.runtime.java.compiled.execution.FunctionExecutionCompiledBuilder;\n" +
+            "import org.finos.legend.pure.runtime.java.compiled.execution.FunctionExecutionCompiled;\n" +
+            "import org.finos.legend.pure.runtime.java.compiled.execution.JavaCompilerEventHandler;\n" +
+            "import org.finos.legend.pure.runtime.java.compiled.execution.OutputWriterCompiled;\n" +
+            "import org.finos.legend.pure.runtime.java.compiled.execution.sourceInformation.E_;\n" +
+            "import org.finos.legend.pure.runtime.java.compiled.execution.sourceInformation.PureCompiledExecutionException;\n" +
+            "import org.finos.legend.pure.runtime.java.compiled.generation.processors.support.Bridge;\n" +
+            "import org.finos.legend.pure.runtime.java.compiled.generation.processors.support.CompiledSupport;\n" +
+            "import org.finos.legend.pure.runtime.java.compiled.generation.processors.support.CoreExtensionCompiled;\n" +
+            "import org.finos.legend.pure.runtime.java.compiled.generation.processors.support.DynamicPureFunctionImpl;\n" +
+            "import org.finos.legend.pure.runtime.java.compiled.generation.processors.support.LambdaCompiledExtended;\n" +
+            "import org.finos.legend.pure.runtime.java.compiled.generation.processors.support.Pure;\n" +
+            "import org.finos.legend.pure.runtime.java.compiled.generation.processors.support.PureStringFormat;\n" +
+            "import org.finos.legend.pure.runtime.java.compiled.generation.processors.support.Reactivator;\n" +
+            "import org.finos.legend.pure.runtime.java.compiled.generation.processors.support.coreinstance.AbstractCompiledCoreInstance;\n" +
+            "import org.finos.legend.pure.runtime.java.compiled.generation.processors.support.coreinstance.AbstractLazyReflectiveCoreInstance;\n" +
+            "import org.finos.legend.pure.runtime.java.compiled.generation.processors.support.coreinstance.AbstractPureCompiledLambda;\n" +
+            "import org.finos.legend.pure.runtime.java.compiled.generation.processors.support.coreinstance.AbstractQuantityCoreInstance;\n" +
+            "import org.finos.legend.pure.runtime.java.compiled.generation.processors.support.coreinstance.BaseJavaModelCoreInstanceFactory;\n" +
+            "import org.finos.legend.pure.runtime.java.compiled.generation.processors.support.coreinstance.GetterOverrideExecutor;\n" +
+            "import org.finos.legend.pure.runtime.java.compiled.generation.processors.support.coreinstance.JavaCompiledCoreInstance;\n" +
+            "import org.finos.legend.pure.runtime.java.compiled.generation.processors.support.coreinstance.PersistentReflectiveCoreInstance;\n" +
+            "import org.finos.legend.pure.runtime.java.compiled.generation.processors.support.coreinstance.QuantityCoreInstance;\n" +
+            "import org.finos.legend.pure.runtime.java.compiled.generation.processors.support.coreinstance.ReflectiveCoreInstance;\n" +
+            "import org.finos.legend.pure.runtime.java.compiled.generation.processors.support.coreinstance.ValCoreInstance;\n" +
+            "import org.finos.legend.pure.runtime.java.compiled.generation.processors.support.function.DefaultPureLambdaFunction0;\n" +
+            "import org.finos.legend.pure.runtime.java.compiled.generation.processors.support.function.DefaultPureLambdaFunction1;\n" +
+            "import org.finos.legend.pure.runtime.java.compiled.generation.processors.support.function.DefaultPureLambdaFunction2;\n" +
+            "import org.finos.legend.pure.runtime.java.compiled.generation.processors.support.function.DefaultPureLambdaFunction;\n" +
+            "import org.finos.legend.pure.runtime.java.compiled.generation.processors.support.function.Procedure3;\n" +
+            "import org.finos.legend.pure.runtime.java.compiled.generation.processors.support.function.Procedure4;\n" +
+            "import org.finos.legend.pure.runtime.java.compiled.generation.processors.support.function.PureFunction0;\n" +
+            "import org.finos.legend.pure.runtime.java.compiled.generation.processors.support.function.PureFunction1;\n" +
+            "import org.finos.legend.pure.runtime.java.compiled.generation.processors.support.function.PureFunction2;\n" +
+            "import org.finos.legend.pure.runtime.java.compiled.generation.processors.support.function.PureFunction2Wrapper;\n" +
+            "import org.finos.legend.pure.runtime.java.compiled.generation.processors.support.function.PureFunction3;\n" +
+            "import org.finos.legend.pure.runtime.java.compiled.generation.processors.support.function.PureLambdaFunction0;\n" +
+            "import org.finos.legend.pure.runtime.java.compiled.generation.processors.support.function.PureLambdaFunction1;\n" +
+            "import org.finos.legend.pure.runtime.java.compiled.generation.processors.support.function.PureLambdaFunction2;\n" +
+            "import org.finos.legend.pure.runtime.java.compiled.generation.processors.support.function.PureLambdaFunction3;\n" +
+            "import org.finos.legend.pure.runtime.java.compiled.generation.processors.support.function.PureLambdaFunction;\n" +
+            "import org.finos.legend.pure.runtime.java.compiled.generation.processors.support.function.SharedPureFunction;\n" +
+            "import org.finos.legend.pure.runtime.java.compiled.generation.processors.support.function.defended.DefendedFunction0;\n" +
+            "import org.finos.legend.pure.runtime.java.compiled.generation.processors.support.function.defended.DefendedFunction2;\n" +
+            "import org.finos.legend.pure.runtime.java.compiled.generation.processors.support.function.defended.DefendedFunction;\n" +
+            "import org.finos.legend.pure.runtime.java.compiled.generation.processors.support.function.defended.DefendedPredicate;\n" +
+            "import org.finos.legend.pure.runtime.java.compiled.generation.processors.support.function.defended.DefendedProcedure;\n" +
+            "import org.finos.legend.pure.runtime.java.compiled.generation.processors.support.function.defended.DefendedPureFunction1;\n" +
+            "import org.finos.legend.pure.runtime.java.compiled.generation.processors.support.function.defended.DefendedPureFunction2;\n" +
+            "import org.finos.legend.pure.runtime.java.compiled.generation.processors.support.function.defended.DefendedPureFunction3;\n" +
+            "import org.finos.legend.pure.runtime.java.compiled.generation.processors.support.function.defended.DefendedPureLambdaFunction0;\n" +
+            "import org.finos.legend.pure.runtime.java.compiled.generation.processors.support.function.defended.DefendedPureLambdaFunction1;\n" +
+            "import org.finos.legend.pure.runtime.java.compiled.generation.processors.support.function.defended.DefendedPureLambdaFunction2;\n" +
+            "import org.finos.legend.pure.runtime.java.compiled.generation.processors.support.function.defended.DefendedPureLambdaFunction;\n" +
+            "import org.finos.legend.pure.runtime.java.compiled.serialization.model.Enum;\n" +
+            "import org.finos.legend.pure.runtime.java.compiled.serialization.model.EnumRef;\n" +
+            "import org.finos.legend.pure.runtime.java.compiled.serialization.model.Obj;\n" +
+            "import org.finos.legend.pure.runtime.java.compiled.serialization.model.ObjRef;\n" +
+            "import org.finos.legend.pure.runtime.java.compiled.serialization.model.Primitive;\n" +
+            "import org.finos.legend.pure.runtime.java.compiled.serialization.model.PropertyValueConsumer;\n" +
+            "import org.finos.legend.pure.runtime.java.compiled.serialization.model.PropertyValue;\n" +
+            "import org.finos.legend.pure.runtime.java.compiled.serialization.model.PropertyValueMany;\n" +
+            "import org.finos.legend.pure.runtime.java.compiled.serialization.model.PropertyValueOne;\n" +
+            "import org.finos.legend.pure.runtime.java.compiled.serialization.model.PropertyValueVisitor;\n" +
+            "import org.finos.legend.pure.runtime.java.compiled.serialization.model.RValueConsumer;\n" +
+            "import org.finos.legend.pure.runtime.java.compiled.serialization.model.RValue;\n" +
+            "import org.finos.legend.pure.runtime.java.compiled.serialization.model.RValueVisitor;\n";
 
 
     private static final String QUALIFIER_IMPORTS = "import org.eclipse.collections.api.block.function.Function0;\n" +

@@ -37,9 +37,32 @@ public class ClassInterfaceProcessor
 {
     private static final String IMPORTS = "import org.eclipse.collections.api.RichIterable;\n" +
             "import org.finos.legend.pure.m4.coreinstance.CoreInstance;\n" +
-            "import org.finos.legend.pure.runtime.java.compiled.generation.processors.support.function.*;\n" +
-            "import org.finos.legend.pure.runtime.java.compiled.execution.*;\n" +
-            "import org.finos.legend.pure.runtime.java.compiled.execution.sourceInformation.*;\n" +
+            "import org.finos.legend.pure.runtime.java.compiled.generation.processors.support.function.DefaultPureLambdaFunction0;\n" +
+            "import org.finos.legend.pure.runtime.java.compiled.generation.processors.support.function.DefaultPureLambdaFunction1;\n" +
+            "import org.finos.legend.pure.runtime.java.compiled.generation.processors.support.function.DefaultPureLambdaFunction2;\n" +
+            "import org.finos.legend.pure.runtime.java.compiled.generation.processors.support.function.DefaultPureLambdaFunction;\n" +
+            "import org.finos.legend.pure.runtime.java.compiled.generation.processors.support.function.Procedure3;\n" +
+            "import org.finos.legend.pure.runtime.java.compiled.generation.processors.support.function.Procedure4;\n" +
+            "import org.finos.legend.pure.runtime.java.compiled.generation.processors.support.function.PureFunction0;\n" +
+            "import org.finos.legend.pure.runtime.java.compiled.generation.processors.support.function.PureFunction1;\n" +
+            "import org.finos.legend.pure.runtime.java.compiled.generation.processors.support.function.PureFunction2;\n" +
+            "import org.finos.legend.pure.runtime.java.compiled.generation.processors.support.function.PureFunction2Wrapper;\n" +
+            "import org.finos.legend.pure.runtime.java.compiled.generation.processors.support.function.PureFunction3;\n" +
+            "import org.finos.legend.pure.runtime.java.compiled.generation.processors.support.function.PureLambdaFunction0;\n" +
+            "import org.finos.legend.pure.runtime.java.compiled.generation.processors.support.function.PureLambdaFunction1;\n" +
+            "import org.finos.legend.pure.runtime.java.compiled.generation.processors.support.function.PureLambdaFunction2;\n" +
+            "import org.finos.legend.pure.runtime.java.compiled.generation.processors.support.function.PureLambdaFunction3;\n" +
+            "import org.finos.legend.pure.runtime.java.compiled.generation.processors.support.function.PureLambdaFunction;\n" +
+            "import org.finos.legend.pure.runtime.java.compiled.generation.processors.support.function.SharedPureFunction;\n" +
+            "import org.finos.legend.pure.runtime.java.compiled.execution.CompiledExecutionSupport;\n" +
+            "import org.finos.legend.pure.runtime.java.compiled.execution.CompiledProcessorSupport;\n" +
+            "import org.finos.legend.pure.runtime.java.compiled.execution.ConsoleCompiled;\n" +
+            "import org.finos.legend.pure.runtime.java.compiled.execution.FunctionExecutionCompiledBuilder;\n" +
+            "import org.finos.legend.pure.runtime.java.compiled.execution.FunctionExecutionCompiled;\n" +
+            "import org.finos.legend.pure.runtime.java.compiled.execution.JavaCompilerEventHandler;\n" +
+            "import org.finos.legend.pure.runtime.java.compiled.execution.OutputWriterCompiled;\n" +
+            "import org.finos.legend.pure.runtime.java.compiled.execution.sourceInformation.E_;\n" +
+            "import org.finos.legend.pure.runtime.java.compiled.execution.sourceInformation.PureCompiledExecutionException;\n" +
             "import org.finos.legend.pure.m3.execution.ExecutionSupport;\n";
 
     public static StringJavaSource buildInterface(String _package, String imports, CoreInstance classGenericType, ProcessorContext processorContext, ProcessorSupport processorSupport, boolean useJavaInheritance)
