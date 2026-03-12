@@ -764,14 +764,6 @@ public final class JavaSourceCodeGenerator
     }
 
 
-    private String buildLambdaZero()
-    {
-        return "public interface LambdaZero<T>\n" +
-                "{\n" +
-                "    T execute();\n" +
-                "}\n";
-    }
-
     private String toFactoryRegistryEntry(String path, CoreInstance _class)
     {
         String factory = ClassProcessor.requiresCompilationImpl(this.processorSupport, _class) ?
@@ -838,7 +830,6 @@ public final class JavaSourceCodeGenerator
 
         MutableList<StringJavaSource> coreJavaSources = Lists.mutable.with(
                 StringJavaSource.newStringJavaSource(JavaPackageAndImportBuilder.platformJavaPackage(), "PureCompiledLambda", imports + platform + this.buildPureCompiledLambda(processorContext)),
-                StringJavaSource.newStringJavaSource(JavaPackageAndImportBuilder.platformJavaPackage(), "LambdaZero", imports + platform + this.buildLambdaZero()),
                 EnumProcessor.processEnum(),
                 EnumProcessor.processEnumLazy(),
                 EnumProcessor.processEnumLazyComponent());

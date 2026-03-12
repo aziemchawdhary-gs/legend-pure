@@ -81,7 +81,7 @@ import org.finos.legend.pure.runtime.java.compiled.generation.processors.support
 import org.finos.legend.pure.runtime.java.compiled.generation.processors.support.coreinstance.ReflectiveCoreInstance;
 import org.finos.legend.pure.runtime.java.compiled.generation.processors.support.coreinstance.ValCoreInstance;
 import org.finos.legend.pure.runtime.java.compiled.generation.processors.support.function.SharedPureFunction;
-import org.finos.legend.pure.runtime.java.compiled.generation.processors.support.function.defended.DefendedFunction0;
+import org.eclipse.collections.api.block.function.Function0;
 import org.finos.legend.pure.runtime.java.compiled.generation.processors.support.map.PureMap;
 import org.finos.legend.pure.runtime.java.compiled.generation.processors.type.TypeProcessor;
 import org.finos.legend.pure.runtime.java.compiled.generation.processors.type._class.ClassProcessor;
@@ -2134,7 +2134,7 @@ public class CompiledSupport
         return (sourceCollection == null) ? Lists.immutable.empty() : sourceCollection.collect(sourceObject -> castWithExceptionHandling(sourceObject, targetType, sourceInformation));
     }
 
-    public static Object castExtendedPrimitive(Object sourceObject, Class<?> targetType, String typeName, DefendedFunction0<Object> run, SourceInformation sourceInformation)
+    public static Object castExtendedPrimitive(Object sourceObject, Class<?> targetType, String typeName, Function0<Object> run, SourceInformation sourceInformation)
     {
         if (sourceObject != null && !targetType.isInstance(sourceObject))
         {

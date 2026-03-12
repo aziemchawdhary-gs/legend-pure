@@ -103,8 +103,8 @@ public class If extends AbstractNative
         }
         else
         {
-            // For multi-expression lambdas, the result is from .execute() which is never null, so no explicit type parameter needed
-            return (returnToMany ? "CompiledSupport.toPureCollection(" : "") + lambdaZero(lambda, FunctionProcessor.processFunctionDefinitionContent(topLevelElement, Instance.getValueForMetaPropertyToOneResolved(lambda, M3Properties.values, processorSupport), true, processorContext, processorContext.getSupport()), processorContext.getSupport()) + ".execute()" + (returnToMany ? ")" : "");
+            // For multi-expression lambdas, the result is from .get() which is never null, so no explicit type parameter needed
+            return (returnToMany ? "CompiledSupport.toPureCollection(" : "") + lambdaZero(lambda, FunctionProcessor.processFunctionDefinitionContent(topLevelElement, Instance.getValueForMetaPropertyToOneResolved(lambda, M3Properties.values, processorSupport), true, processorContext, processorContext.getSupport()), processorContext.getSupport()) + ".get()" + (returnToMany ? ")" : "");
         }
     }
 
@@ -116,7 +116,7 @@ public class If extends AbstractNative
         CoreInstance multiplicity = last.getValueForMetaPropertyToOne(M3Properties.multiplicity);
         //CoreInstance fType = org.finos.legend.pure.m3.bootstrap.type.function.processorSupport.function_getFunctionType(a.getValueForMetaPropertyToOne(M3Properties.values), context);
         String type = TypeProcessor.typeToJavaObjectWithMul(returnType, multiplicity, processorSupport);
-        return "new LambdaZero<" + type + ">(){public " + type + " execute(){ " + val + "}}";
+        return "new java.util.function.Supplier<" + type + ">(){public " + type + " get(){ " + val + "}}";
     }
 
 
