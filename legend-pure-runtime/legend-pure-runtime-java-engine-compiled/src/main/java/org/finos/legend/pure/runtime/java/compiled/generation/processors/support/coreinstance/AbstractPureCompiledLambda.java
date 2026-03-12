@@ -14,6 +14,9 @@
 
 package org.finos.legend.pure.runtime.java.compiled.generation.processors.support.coreinstance;
 
+import org.eclipse.collections.api.RichIterable;
+import org.eclipse.collections.api.list.ListIterable;
+import org.finos.legend.pure.m3.coreinstance.KeyIndex;
 import org.finos.legend.pure.m3.coreinstance.meta.pure.metamodel.function.LambdaFunction;
 import org.finos.legend.pure.m3.execution.ExecutionSupport;
 import org.finos.legend.pure.m3.navigation.M3Paths;
@@ -115,6 +118,24 @@ public abstract class AbstractPureCompiledLambda<T> extends ReflectiveCoreInstan
     public CoreInstance getClassifier()
     {
         return lambdaFunction().getClassifier();
+    }
+
+    @Override
+    protected KeyIndex getKeyIndex()
+    {
+        throw new UnsupportedOperationException("PureCompiledLambda delegates getKeys/getRealKeyByName to lambdaFunction");
+    }
+
+    @Override
+    public RichIterable<String> getKeys()
+    {
+        return lambdaFunction().getKeys();
+    }
+
+    @Override
+    public ListIterable<String> getRealKeyByName(String name)
+    {
+        return lambdaFunction().getRealKeyByName(name);
     }
 
     @Override

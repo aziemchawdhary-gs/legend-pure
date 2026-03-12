@@ -146,15 +146,9 @@ public abstract class AbstractQuantityCoreInstance extends ReflectiveCoreInstanc
     }
 
     @Override
-    public RichIterable<String> getKeys()
+    protected KeyIndex getKeyIndex()
     {
-        return KEY_INDEX.getKeys();
-    }
-
-    @Override
-    public ListIterable<String> getRealKeyByName(String name)
-    {
-        return KEY_INDEX.getRealKeyByName(name);
+        return KEY_INDEX;
     }
 
     @Override

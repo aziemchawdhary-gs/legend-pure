@@ -217,8 +217,7 @@ public class ClassImplProcessor
             sb.append(getterOverrides(interfaceNamePlusTypeParams));
         }
         sb.append(buildGetClassifier()).append("\n");
-        sb.append(buildGetKeys());
-        sb.append(buildGetRealGetKeyByName());
+        sb.append(buildGetKeyIndex());
         sb.append(buildGetValueForMetaPropertyToOne(classGenericType, processorSupport));
         sb.append(buildGetValueForMetaPropertyToMany(classGenericType, processorSupport));
         sb.append(buildSetKeyValues(classGenericType, processorSupport));
@@ -493,22 +492,12 @@ public class ClassImplProcessor
                 "    }\n";
     }
 
-    static String buildGetKeys()
+    static String buildGetKeyIndex()
     {
         return "    @Override\n" +
-                "    public RichIterable<String> getKeys()\n" +
+                "    protected org.finos.legend.pure.m3.coreinstance.KeyIndex getKeyIndex()\n" +
                 "    {\n" +
-                "        return KEY_INDEX.getKeys();\n" +
-                "    }\n" +
-                "\n";
-    }
-
-    static String buildGetRealGetKeyByName()
-    {
-        return "    @Override\n" +
-                "    public ListIterable<String> getRealKeyByName(String name)\n" +
-                "    {\n" +
-                "        return KEY_INDEX.getRealKeyByName(name);\n" +
+                "        return KEY_INDEX;\n" +
                 "    }\n" +
                 "\n";
     }

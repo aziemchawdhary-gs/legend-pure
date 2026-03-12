@@ -156,8 +156,7 @@ public class ClassLazyImplProcessor
             sb.append(buildFactory(className));
         }
         sb.append("\n");
-        sb.append(ClassImplProcessor.buildGetKeys());
-        sb.append(ClassImplProcessor.buildGetRealGetKeyByName());
+        sb.append(ClassImplProcessor.buildGetKeyIndex());
         if (instanceOfGetterOverride)
         {
             sb.append(lazyGetterOverride(interfaceNamePlusTypeParams));

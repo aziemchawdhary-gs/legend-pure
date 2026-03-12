@@ -20,6 +20,7 @@ import org.eclipse.collections.api.list.ListIterable;
 import org.eclipse.collections.api.list.MutableList;
 import org.eclipse.collections.api.set.MutableSet;
 import org.eclipse.collections.impl.utility.Iterate;
+import org.finos.legend.pure.m3.coreinstance.KeyIndex;
 import org.finos.legend.pure.m3.coreinstance.helper.AnyHelper;
 import org.finos.legend.pure.m3.coreinstance.helper.AnyStubHelper;
 import org.finos.legend.pure.m3.navigation.M3Paths;
@@ -379,16 +380,18 @@ public abstract class ReflectiveCoreInstance extends AbstractCompiledCoreInstanc
         throw new RuntimeException("TO CODE");
     }
 
+    protected abstract KeyIndex getKeyIndex();
+
     @Override
     public RichIterable<String> getKeys()
     {
-        throw new RuntimeException("TO CODE");
+        return getKeyIndex().getKeys();
     }
 
     @Override
     public ListIterable<String> getRealKeyByName(String name)
     {
-        throw new RuntimeException("TO CODE");
+        return getKeyIndex().getRealKeyByName(name);
     }
 
     @Override
