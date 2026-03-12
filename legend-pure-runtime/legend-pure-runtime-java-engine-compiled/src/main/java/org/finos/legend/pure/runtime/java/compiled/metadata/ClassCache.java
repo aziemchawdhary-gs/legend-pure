@@ -101,6 +101,13 @@ public class ClassCache
         return java.constructor;
     }
 
+    public Constructor<?> getIfAbsentPutOverrideConstructorForType(Type type)
+    {
+        TypeJavaInfo java = getJavaInfoForType(type);
+        Constructor<?> overrideCtor = java.getOverrideConstructor(this.classLoader, this.processorSupport);
+        return overrideCtor != null ? overrideCtor : java.constructor;
+    }
+
     public Method getIfAbsentPutPropertySetterMethodForType(Type type, String propertyName)
     {
         TypeJavaInfo java = getJavaInfoForType(type);
@@ -211,12 +218,50 @@ public class ClassCache
         private final Class<?> implClass;
         private final Constructor<?> constructor;
         private final ConcurrentMutableMap<String, Method> propertySetterMethods = ConcurrentHashMap.newMap();
+        private volatile Constructor<?> overrideConstructor;
+        private volatile boolean overrideConstructorResolved;
 
         private TypeJavaInfo(Class<?> interfaceClass, Class<?> implClass, Constructor<?> constructor)
         {
             this.interfaceClass = interfaceClass;
             this.implClass = implClass;
             this.constructor = constructor;
+        }
+
+        Constructor<?> getOverrideConstructor(ClassLoader classLoader, ProcessorSupport processorSupport)
+        {
+            if (!this.overrideConstructorResolved)
+            {
+                synchronized (this)
+                {
+                    if (!this.overrideConstructorResolved)
+                    {
+                        try
+                        {
+                            // Derive the override impl class name by replacing _Impl suffix with _OverrideImpl
+                            String implClassName = this.implClass.getName();
+                            String overrideClassName;
+                            if (implClassName.endsWith("_Impl"))
+                            {
+                                overrideClassName = implClassName.substring(0, implClassName.length() - 4) + "OverrideImpl";
+                            }
+                            else
+                            {
+                                overrideClassName = implClassName + "_OverrideImpl";
+                            }
+                            Class<?> overrideClass = classLoader.loadClass(overrideClassName);
+                            this.overrideConstructor = overrideClass.getConstructor(String.class);
+                        }
+                        catch (ClassNotFoundException | NoSuchMethodException e)
+                        {
+                            // Override impl not available, fall back to regular constructor
+                            this.overrideConstructor = null;
+                        }
+                        this.overrideConstructorResolved = true;
+                    }
+                }
+            }
+            return this.overrideConstructor;
         }
 
         Method getSetterMethodForProperty(String propertyName)

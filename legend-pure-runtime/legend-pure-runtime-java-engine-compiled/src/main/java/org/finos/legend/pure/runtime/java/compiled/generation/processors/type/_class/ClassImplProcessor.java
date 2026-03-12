@@ -97,6 +97,7 @@ public class ClassImplProcessor
     static final String SERIALIZABLE_IMPORTS = JavaTools.sortReduceAndPrintImports(SERIALIZABLE_IMPORTS_LIST);
 
     public static final String CLASS_IMPL_SUFFIX = "_Impl";
+    public static final String CLASS_OVERRIDE_IMPL_SUFFIX = "_OverrideImpl";
 
     @Deprecated
     public static final Predicate2<CoreInstance, ProcessorSupport> IS_TO_ONE = ClassImplProcessor::isToOne;
@@ -964,8 +965,7 @@ public class ClassImplProcessor
     {
         return "    public RichIterable<? extends " + typeObject + "> _" + name + "()\n" +
                 "    {\n" +
-                "        return " + (isDataType || isOverrider || isClassifierGenericType ? owner + "._" + name + ";\n" :
-                owner + "._elementOverride() == null || !GetterOverrideExecutor.class.isInstance(" + owner + "._elementOverride()) ? " + owner + "._" + name + " : (RichIterable<? extends " + typeObject + ">)((GetterOverrideExecutor)" + owner + "._elementOverride()).executeToMany(" + owner + ", \"" + classOwnerId + "\", \"" + name + "\");\n") +
+                "        return " + owner + "._" + name + ";\n" +
                 "    }\n";
     }
 
@@ -973,8 +973,7 @@ public class ClassImplProcessor
     {
         return "    public " + typeObject + " _" + name + "()\n" +
                 "    {\n" +
-                "        return " + (isDataType || isOverrider || isClassifierGenericType ? owner + "._" + name + ";\n" :
-                owner + "._elementOverride() == null || !GetterOverrideExecutor.class.isInstance(" + owner + "._elementOverride()) ? " + owner + "._" + name + " : (" + typeObject + ")((GetterOverrideExecutor)" + owner + "._elementOverride()).executeToOne(" + owner + ", \"" + classOwnerId + "\", \"" + name + "\");\n") +
+                "        return " + owner + "._" + name + ";\n" +
                 "    }\n";
     }
 
@@ -1178,6 +1177,118 @@ public class ClassImplProcessor
     {
         CoreInstance multiplicity = Instance.getValueForMetaPropertyToOneResolved(property, M3Properties.multiplicity, processorSupport);
         return Multiplicity.isToOne(multiplicity, false);
+    }
+
+    public static StringJavaSource buildOverrideImplementation(String _package, String imports, CoreInstance classGenericType, ProcessorContext processorContext, ProcessorSupport processorSupport, boolean useJavaInheritance)
+    {
+        CoreInstance _class = Instance.getValueForMetaPropertyToOneResolved(classGenericType, M3Properties.rawType, processorSupport);
+        String implClassName = JavaPackageAndImportBuilder.buildImplClassNameFromType(_class, CLASS_IMPL_SUFFIX, processorSupport);
+        String overrideClassName = JavaPackageAndImportBuilder.buildImplClassNameFromType(_class, CLASS_OVERRIDE_IMPL_SUFFIX, processorSupport);
+        String typeParams = ClassProcessor.typeParameters(_class);
+        String typeParamsString = typeParams.isEmpty() ? "" : "<" + typeParams + ">";
+        String overrideClassNamePlusTypeParams = overrideClassName + typeParamsString;
+        String interfaceName = TypeProcessor.javaInterfaceForType(_class, processorSupport);
+        String interfaceNamePlusTypeParams = interfaceName + typeParamsString;
+
+        CoreInstance associationClass = processorSupport.package_getByUserPath(M3Paths.Association);
+
+        // Build override getters for properties that need them
+        StringBuilder overrideGetters = new StringBuilder();
+        MapIterable<String, CoreInstance> propertiesByName = processorSupport.class_getSimplePropertiesByName(_class);
+        if (propertiesByName.notEmpty())
+        {
+            Lists.mutable.<Pair<String, CoreInstance>>ofInitialCapacity(propertiesByName.size())
+                    .withAll(propertiesByName.keyValuesView())
+                    .sortThisBy(Pair::getOne)
+                    .forEach(pair ->
+                    {
+                        String name = pair.getOne();
+                        CoreInstance property = pair.getTwo();
+                        CoreInstance unresolvedReturnType = ClassProcessor.getPropertyUnresolvedReturnType(property, processorSupport);
+                        CoreInstance returnType = ClassProcessor.getPropertyResolvedReturnType(classGenericType, property, processorSupport);
+                        CoreInstance returnMultiplicity = Instance.getValueForMetaPropertyToOneResolved(property, M3Properties.multiplicity, processorSupport);
+
+                        CoreInstance rawType = Instance.getValueForMetaPropertyToOneResolved(returnType, M3Properties.rawType, processorSupport);
+                        boolean isOverrider = M3Properties.elementOverride.equals(name);
+                        boolean isClassifierGenericType = "classifierGenericType".equals(name);
+                        boolean isDataType = rawType != null && Instance.instanceOf(rawType, M3Paths.DataType, processorSupport);
+
+                        // Only generate override getters for properties that had the override check before
+                        if (isDataType || isOverrider || isClassifierGenericType)
+                        {
+                            return;
+                        }
+
+                        CoreInstance propertyOwner = Instance.getValueForMetaPropertyToOneResolved(property, M3Properties.owner, processorSupport);
+                        boolean includeGetter = !useJavaInheritance || propertyOwner == _class || Instance.instanceOf(propertyOwner, associationClass, processorSupport);
+                        if (!includeGetter)
+                        {
+                            return;
+                        }
+
+                        CoreInstance classOwner = Instance.getValueForMetaPropertyToOneResolved(property.getValueForMetaPropertyToOne(M3Properties.classifierGenericType).getValueForMetaPropertyToMany(M3Properties.typeArguments).get(0), M3Properties.rawType, processorSupport);
+                        String classOwnerId = PackageableElement.getSystemPathForPackageableElement(classOwner);
+
+                        boolean makePrimitiveIfPossible = GenericType.isGenericTypeConcrete(unresolvedReturnType) && Multiplicity.isToOne(returnMultiplicity, true);
+                        String typeObject = Multiplicity.isToOne(returnMultiplicity, false) ?
+                                TypeProcessor.pureTypeToJava(returnType, true, makePrimitiveIfPossible, processorSupport) :
+                                TypeProcessor.pureTypeToJava(returnType, true, false, processorSupport);
+
+                        if (Multiplicity.isToOne(returnMultiplicity, false))
+                        {
+                            overrideGetters.append(buildOverridePropertyToOneGetter(classOwnerId, name, typeObject));
+                        }
+                        else
+                        {
+                            overrideGetters.append(buildOverridePropertyToManyGetter(classOwnerId, name, typeObject));
+                        }
+                    });
+        }
+
+        // Build copy method that returns _OverrideImpl
+        String classNamePlusTypeParams = interfaceName + (typeParams.isEmpty() ? "" : "<" + typeParams + "> ");
+        String overrideCopy =
+                "    @Override\n" +
+                "    public " + classNamePlusTypeParams + " copy()\n" +
+                "    {\n" +
+                "        return new " + overrideClassName + "(this);\n" +
+                "    }\n";
+
+        return StringJavaSource.newStringJavaSource(_package, overrideClassName, IMPORTS + imports +
+                "public class " + overrideClassNamePlusTypeParams + " extends " + implClassName + typeParamsString + "\n" +
+                "{\n" +
+                "    public " + overrideClassName + "(String id)\n" +
+                "    {\n" +
+                "        super(id);\n" +
+                "    }\n" +
+                "\n" +
+                "    public " + overrideClassName + "(" + interfaceName + (typeParams.isEmpty() ? "" : "<" + typeParams + ">") + " src)\n" +
+                "    {\n" +
+                "        super(src);\n" +
+                "    }\n" +
+                "\n" +
+                overrideCopy +
+                "\n" +
+                overrideGetters +
+                "}");
+    }
+
+    private static String buildOverridePropertyToOneGetter(String classOwnerId, String name, String typeObject)
+    {
+        return "    @Override\n" +
+                "    public " + typeObject + " _" + name + "()\n" +
+                "    {\n" +
+                "        return this._elementOverride() == null || !GetterOverrideExecutor.class.isInstance(this._elementOverride()) ? this._" + name + " : (" + typeObject + ")((GetterOverrideExecutor)this._elementOverride()).executeToOne(this, \"" + classOwnerId + "\", \"" + name + "\");\n" +
+                "    }\n";
+    }
+
+    private static String buildOverridePropertyToManyGetter(String classOwnerId, String name, String typeObject)
+    {
+        return "    @Override\n" +
+                "    public RichIterable<? extends " + typeObject + "> _" + name + "()\n" +
+                "    {\n" +
+                "        return this._elementOverride() == null || !GetterOverrideExecutor.class.isInstance(this._elementOverride()) ? this._" + name + " : (RichIterable<? extends " + typeObject + ">)((GetterOverrideExecutor)this._elementOverride()).executeToMany(this, \"" + classOwnerId + "\", \"" + name + "\");\n" +
+                "    }\n";
     }
 
     public interface FullPropertyImplementation

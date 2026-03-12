@@ -76,6 +76,13 @@ public class ClassProcessor
                 processorContext.addJavaSource(ClassImplIncrementalCompilationProcessor.buildImplementation(_package, imports, classGenericType, processorContext, processorSupport));
             }
             processorContext.addJavaSource(ClassImplProcessor.buildImplementation(_package, imports, classGenericType, processorContext, processorSupport, useJavaInheritance, addJavaSerializationSupport, pureExternalPackage));
+            // Generate _OverrideImpl subclass for non-GetterOverride classes that have properties needing override support
+            String classPath = PackageableElement.getUserPathForPackageableElement(_class);
+            boolean isGetterOverride = M3Paths.GetterOverride.equals(classPath) || M3Paths.ConstraintsGetterOverride.equals(classPath);
+            if (!isGetterOverride)
+            {
+                processorContext.addJavaSource(ClassImplProcessor.buildOverrideImplementation(_package, imports, classGenericType, processorContext, processorSupport, useJavaInheritance));
+            }
             if (isLazy(_class))
             {
                 processorContext.addJavaSource(ClassLazyImplProcessor.buildImplementation(_package, imports, classGenericType, processorContext, processorSupport));

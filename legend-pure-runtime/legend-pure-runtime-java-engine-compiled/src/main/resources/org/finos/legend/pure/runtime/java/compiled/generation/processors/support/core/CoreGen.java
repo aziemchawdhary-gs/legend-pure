@@ -193,7 +193,9 @@ public class CoreGen extends CoreHelper
     public static Object newObject(final Class<?> aClass, RichIterable<? extends Root_meta_pure_functions_lang_KeyValue> keyExpressions, ElementOverride override, Function getterToOne, Function getterToMany, Object payload, PureFunction2 getterToOneExec, PureFunction2 getterToManyExec, ExecutionSupport es)
     {
         final ClassCache classCache = ((CompiledExecutionSupport) es).getClassCache();
-        Constructor<?> constructor = classCache.getIfAbsentPutConstructorForType(aClass);
+        Constructor<?> constructor = (override instanceof GetterOverride) ?
+                classCache.getIfAbsentPutOverrideConstructorForType(aClass) :
+                classCache.getIfAbsentPutConstructorForType(aClass);
         final Any result;
         try
         {
