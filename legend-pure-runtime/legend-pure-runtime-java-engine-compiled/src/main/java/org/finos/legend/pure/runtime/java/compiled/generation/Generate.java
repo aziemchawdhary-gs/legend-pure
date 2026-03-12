@@ -33,8 +33,10 @@ import org.finos.legend.pure.runtime.java.compiled.statelistener.VoidJavaCompile
 
 import java.util.Collection;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.SortedMap;
 import java.util.function.Function;
+import java.util.stream.Collectors;
 
 public class Generate
 {
@@ -82,15 +84,16 @@ public class Generate
         javaSources.addAll(extras);
         sourceCounter.add(extras.size());
 
-        sources.forEach(source ->
+        List<? extends Source> sourceList = sources.toList();
+        List<ListIterable<StringJavaSource>> results = sourceList.parallelStream()
+                .map(source -> javaSourceCodeGenerator.generateCode(source, null, compileGroup, generatePureTests))
+                .collect(Collectors.toList());
+        results.forEach(javaSources::addAllIterable);
+        sourceCounter.add(sourceList.size());
+        if (this.message != null)
         {
-            javaSources.addAllIterable(javaSourceCodeGenerator.generateCode(source, null, compileGroup, generatePureTests));
-            sourceCounter.increment();
-            if (this.message != null)
-            {
-                this.message.setMessage("Generating Java sources (" + sourceCounter.getCount() + "/" + totalSourceCount + ")");
-            }
-        });
+            this.message.setMessage("Generating Java sources (" + sourceCounter.getCount() + "/" + totalSourceCount + ")");
+        }
         this.observer.endGeneratingJavaFiles(compileGroup, javaSources);
 
         return javaSources;

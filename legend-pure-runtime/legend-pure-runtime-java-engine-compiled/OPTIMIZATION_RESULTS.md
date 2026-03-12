@@ -29,10 +29,10 @@ Benchmarked on 2026-03-12.
 | 5 | 16cb1dcdb | Generated switch-dispatch for property operations |
 | 6 | 16635c07e | StringBuilder emitter for code generation |
 
-## Remaining Items
+## All Items
 
-| # | Item | Description |
-|---|------|-------------|
-| 7 | P3 Phase 1-2 | LambdaZero + Defended wrapper removal |
-| 8 | P2-B | Reduce `_Impl` boilerplate (getKeys/getRealKeyByName → base class) |
-| 9 | P1-A | Parallelization of generation pipeline |
+| # | Commit | Description |
+|---|--------|-------------|
+| 7 | 88a9fde37 | LambdaZero → java.util.function.Supplier |
+| 8 | 561c4a1ac | Reduce `_Impl` boilerplate (getKeys/getRealKeyByName → base class) |
+| 9 | (pending) | Parallel source-level code generation via parallelStream |

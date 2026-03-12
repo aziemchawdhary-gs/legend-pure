@@ -223,8 +223,8 @@ public final class JavaSourceCodeGenerator
     private final boolean useLegacyMetadataForExternalAPI;
 
     private final boolean includePureStackTrace;
-    private final MutableSet<CoreInstance> processedClasses = Sets.mutable.empty();
-    private final MutableSet<CoreInstance> platformEnumerations = Sets.mutable.empty();
+    private final MutableSet<CoreInstance> processedClasses = Sets.mutable.<CoreInstance>empty().asSynchronized();
+    private final MutableSet<CoreInstance> platformEnumerations = Sets.mutable.<CoreInstance>empty().asSynchronized();
     private final MutableSet<CoreInstance> javaSerializedClasses = Sets.mutable.empty();
     private final ListIterable<CompiledExtension> extensions;
 
