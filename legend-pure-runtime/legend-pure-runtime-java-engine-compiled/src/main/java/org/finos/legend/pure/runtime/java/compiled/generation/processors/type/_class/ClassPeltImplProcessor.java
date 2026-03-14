@@ -391,8 +391,16 @@ public class ClassPeltImplProcessor
     private static StringBuilder appendStandardMethods(StringBuilder builder, ListIterable<PropertyInfo> simpleProperties, Class<? extends AbstractLazyCoreInstance> superClass)
     {
         boolean isConcreteElementOrVirtualPackage = isConcreteElement(superClass) || isVirtualPackage(superClass);
-        builder.append(ClassImplProcessor.buildGetKeys());
-        builder.append(ClassImplProcessor.buildGetRealGetKeyByName());
+        builder.append("    @Override\n")
+                .append("    public org.eclipse.collections.api.RichIterable<String> getKeys()\n")
+                .append("    {\n")
+                .append("        return KEY_INDEX.getKeys();\n")
+                .append("    }\n\n");
+        builder.append("    @Override\n")
+                .append("    public org.eclipse.collections.api.list.ListIterable<String> getRealKeyByName(String name)\n")
+                .append("    {\n")
+                .append("        return KEY_INDEX.getRealKeyByName(name);\n")
+                .append("    }\n\n");
         builder.append(ClassImplProcessor.buildGetFullSystemPath()).append('\n');
         if (isConcreteElementOrVirtualPackage)
         {
