@@ -159,7 +159,7 @@ The root POM aggregates **five top-level Maven modules**, each of which is itsel
 aggregator with leaf jar modules:
 
 ```text
-legend-pure  (root aggregator, groupId: org.finos.legend.pure, version: 5.79.1-SNAPSHOT)
+legend-pure  (root aggregator, groupId: org.finos.legend.pure, version: ${revision})
 │
 ├── legend-pure-core          Core language and metamodel
 │   ├── legend-pure-m4                  Low-level metamodel primitives (CoreInstance, etc.)
@@ -214,6 +214,9 @@ legend-pure  (root aggregator, groupId: org.finos.legend.pure, version: 5.79.1-S
         ├── legend-pure-runtime-java-extension-compiled-store-relational
         └── legend-pure-runtime-java-extension-interpreted-store-relational
 ```
+
+The version is a Maven CI-friendly `${revision}` property declared once in the
+root `pom.xml`; see [Release Process](../guides/build-and-ci.md#release-process).
 
 ### Module Naming Conventions
 

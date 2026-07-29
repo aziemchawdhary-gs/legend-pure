@@ -133,8 +133,10 @@ The pipeline is defined in [`.github/workflows/build.yml`](../../.github/workflo
 
 ### Trigger
 
-Runs on every `push` and `pull_request` event.
-Release commits (messages containing `[maven-release-plugin]`) are skipped.
+Runs on every `push` and `pull_request` event, but only for the canonical
+`finos/legend-pure` repository — pushes on forks are skipped. Pull requests from
+forks still build, because for `pull_request` events `github.repository` is the
+base repository.
 
 ### Environment
 
@@ -169,9 +171,35 @@ uploaded as a build artifact for the `test-result.yml` workflow to process.
 
 ### Release Process
 
-Releases are managed via `maven-release-plugin` and are triggered by the
-[`release.yml`](../../.github/workflows/release.yml) workflow. Do not trigger
-releases manually unless you are the designated release engineer.
+Releases use [Maven CI-friendly versions](https://maven.apache.org/maven-ci-friendly.html).
+The project version lives in a single `<revision>` property in the root
+`pom.xml`; every POM's `<version>` (or `<parent><version>`) is `${revision}`.
+`flatten-maven-plugin` resolves the placeholder at `process-resources`, so
+installed and published POMs always carry literal versions — downstream
+consumers such as `legend-engine` never see `${revision}`.
+
+Releases are triggered by the
+[`release.yml`](../../.github/workflows/release.yml) workflow
+(`workflow_dispatch`, with the release version as its input). The workflow:
+
+1. Builds, tests, and publishes with `-Drevision=<releaseVersion> -P release`.
+2. Tags the commit `legend-pure-<releaseVersion>`.
+3. Rewrites `<revision>` to the next patch `-SNAPSHOT` and pushes that commit
+   to `master`.
+
+Publishing happens before tagging, so a failed publish leaves no tag and no
+bump commit — just re-run the workflow. If a tag was created but the release
+must be abandoned, the
+[`clean-after-failed-release.yml`](../../.github/workflows/clean-after-failed-release.yml)
+workflow deletes the latest tag.
+
+To build a specific version locally, override the property:
+
+```bash
+mvn -Drevision=1.2.3-LOCAL install -DskipTests
+```
+
+Do not trigger releases manually unless you are the designated release engineer.
 
 ---
 
