@@ -13,11 +13,21 @@
 # limitations under the License.
 
 
-# This action deletes the latest tag after a failed release.
-# With CI-friendly versions, there are no release commits to clean up — only the tag.
+# This action deletes one explicitly named tag after a failed release.
+# With publish-before-tag ordering (publish -> tag -> bump), a failed release
+# normally fails before the tag is ever created or pushed, so there is usually
+# no tag to clean up at all. When a tag does need removing — e.g. it was
+# pushed but the release must still be abandoned — the operator must name it
+# explicitly; this workflow never guesses which tag is "latest", since the
+# newest tag in the repo is ordinarily the last GOOD release, not a stray one.
 name: Clean repo after failed release
 
-on: [workflow_dispatch]
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Exact tag to delete, e.g. legend-pure-5.91.0"
+        required: true
 
 jobs:
   clean-repo:
@@ -26,7 +36,6 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v6
         with:
-          fetch-depth: 0
           token: ${{ secrets.FINOS_GITHUB_TOKEN }}
 
       - name: Configure git
@@ -34,7 +43,5 @@ jobs:
           git config --global user.email "37706051+finos-admin@users.noreply.github.com"
           git config --global user.name "FINOS Administrator"
 
-      - name: Clean repo
-        run: |
-          LATEST_TAG=$(git describe --tags $(git rev-list --tags --max-count=1))
-          git push --delete origin $LATEST_TAG
+      - name: Delete tag
+        run: git push --delete origin "${{ github.event.inputs.tag }}"

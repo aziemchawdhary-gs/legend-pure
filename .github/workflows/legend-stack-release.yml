@@ -73,6 +73,9 @@ jobs:
         with:
           theme: dark
 
+      # This goal list mirrors the FINOS parent POM's `release.goals`
+      # (org/finos/finos/9/finos-9.pom: install org.sonatype.central:central-publishing-maven-plugin:0.7.0:publish),
+      # which is what `release:perform` used to execute. Keep in sync if the parent POM version is bumped.
       - name: Build and publish release
         run: |
           mvn -B -e -Drevision=${{ github.event.client_payload.releaseVersion }} -P release \
@@ -93,4 +96,5 @@ jobs:
           sed -i "s|<revision>.*</revision>|<revision>${nextSnapshot}</revision>|" pom.xml
           git add pom.xml
           git commit -m "Bump version to ${nextSnapshot}"
+          git pull --rebase origin master
           git push origin master

@@ -136,7 +136,11 @@ The pipeline is defined in [`.github/workflows/build.yml`](../../.github/workflo
 Runs on every `push` and `pull_request` event, but only for the canonical
 `finos/legend-pure` repository — pushes on forks are skipped. Pull requests from
 forks still build, because for `pull_request` events `github.repository` is the
-base repository.
+base repository. The `build` job also skips the automated version-bump commit
+(`Bump version to <nextSnapshot>`) that the release workflows push to `master`,
+since that commit doesn't need a full CI run. This is checked via
+`github.event.head_commit.message`, which is `null` (and so never matches) for
+`pull_request` events — PRs are unaffected.
 
 ### Environment
 
@@ -187,11 +191,17 @@ Releases are triggered by the
 3. Rewrites `<revision>` to the next patch `-SNAPSHOT` and pushes that commit
    to `master`.
 
-Publishing happens before tagging, so a failed publish leaves no tag and no
-bump commit — just re-run the workflow. If a tag was created but the release
-must be abandoned, the
+Publishing happens before tagging, so if the Central upload itself never
+completed, a failed release leaves no tag and no bump commit — just re-run the
+workflow. However, `autoPublish=true` means the upload can succeed even though
+a *later* step (tag push or version bump/push) then fails; in that case the
+release is already published to Central but un-tagged and/or un-bumped, and
+re-running the workflow will fail on a duplicate version. That situation needs
+manual recovery (create the tag and/or bump commit by hand rather than
+re-running). If a tag was created but the release must still be abandoned, the
 [`clean-after-failed-release.yml`](../../.github/workflows/clean-after-failed-release.yml)
-workflow deletes the latest tag.
+workflow deletes one tag that the operator names explicitly as a
+`workflow_dispatch` input — it does not guess which tag is "latest".
 
 To build a specific version locally, override the property:
 

@@ -24,7 +24,7 @@ on: [push, pull_request]
 jobs:
   build:
     name: Build
-    if: "github.repository == 'finos/legend-pure'"
+    if: "github.repository == 'finos/legend-pure' && !contains(github.event.head_commit.message, 'Bump version to')"
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repo
