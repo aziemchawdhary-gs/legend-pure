@@ -32,7 +32,14 @@
 - Release workflow step order is **publish → tag → bump**. A failed publish must
   leave no tag and no bump commit.
 - JDK 11, 17, 21 or 25 required to build (`java.version.range` enforcer rule).
-  Verification commands below assume one of these is active.
+  Source the project's JDK setup in the same invocation as every `mvn` command:
+  `. /home/aziem/bin/jdk11.sh && mvn ...`. The `JAVA_HOME` exported by the shell
+  profile is broken (it has `/bin` appended). That script also sets the correct
+  `MAVEN_OPTS` — do not set `MAVEN_OPTS` by hand.
+- `grep` in this environment may be aliased to `ugrep`, under which an unescaped
+  `$` in a BRE pattern silently fails to match (`echo 'x${y}z' | grep '${y}'`
+  finds nothing). Use `grep -F` for any pattern containing `${...}`. A grep that
+  unexpectedly finds nothing is more often this than a real content problem.
 - Checkstyle runs at `verify` and fails on warnings. Every `.java`/`.xml`
   file needs the Apache 2.0 header — but note `.flattened-pom.xml` is generated
   outside the scanned source directories, so it needs no header.
@@ -83,12 +90,17 @@ set -uo pipefail
 fail=0
 check() { if [ "$2" = "$3" ]; then echo "PASS: $1"; else echo "FAIL: $1 (got '$2', want '$3')"; fail=1; fi; }
 
-# 1. No POM hardcodes the version any more.
-n=$(grep -rl '5\.91\.1-SNAPSHOT' --include=pom.xml . | grep -v '/target/' | wc -l)
-check "no pom hardcodes 5.91.1-SNAPSHOT" "$n" "0"
+# 1. No POM hardcodes the version in a <version> element any more.
+#    NOTE: do not test for the bare string '5.91.1-SNAPSHOT' — the root POM must
+#    still contain it, inside the <revision> property that Step 4 adds. Testing the
+#    bare string contradicts Step 4 and can never pass.
+n=$(grep -rl '<version>5\.91\.1-SNAPSHOT</version>' --include=pom.xml . | grep -v '/target/' | wc -l)
+check "no pom hardcodes the version in a <version> element" "$n" "0"
 
 # 2. Every one of the 55 POMs references ${revision}.
-n=$(grep -rl '<version>${revision}</version>' --include=pom.xml . | grep -v '/target/' | wc -l)
+#    NOTE: `grep` may be aliased to ugrep, under which an unescaped '$' in a BRE
+#    pattern fails to match. Use grep -F for patterns containing ${...}.
+n=$(grep -rlF '<version>${revision}</version>' --include=pom.xml . | grep -v '/target/' | wc -l)
 check "all 55 poms use \${revision}" "$n" "55"
 
 # 3. The root POM declares the revision property exactly once.
@@ -295,7 +307,9 @@ repository must contain no placeholder:
 ```bash
 POM=~/.m2/repository/org/finos/legend/pure/legend-pure-m3-core/5.91.1-SNAPSHOT/legend-pure-m3-core-5.91.1-SNAPSHOT.pom
 grep -c 'revision' "$POM"          # Expected: 0
-grep -A2 '<parent>' "$POM" | grep version   # Expected: <version>5.91.1-SNAPSHOT</version>
+grep -A5 '<parent>' "$POM" | grep version   # Expected: <version>5.91.1-SNAPSHOT</version>
+# -A5, not -A2: the parent block is groupId/artifactId/version, so -A2 stops one
+# line short of the version and reports nothing.
 ```
 
 Expected: zero occurrences of `revision`, and a literal parent version.
@@ -384,13 +398,11 @@ release` — the last two steps in the file — with the following four steps:
       - name: Build and publish release
         run: |
           mvn -B -e -Drevision=${{ github.event.inputs.releaseVersion }} -P release \
-            -DargLine="-XX:MaxRAMPercentage=25.0" -DforkCount=3 -DreuseForks=true \
-            -Dsurefire.reports.directory=${GITHUB_WORKSPACE}/surefire-reports-aggregate \
             -Dorg.slf4j.simpleLogger.showDateTime=true \
             -Dorg.slf4j.simpleLogger.dateTimeFormat="yyyy-MM-dd HH:mm:ss.SSSZ" \
             install org.sonatype.central:central-publishing-maven-plugin:0.7.0:publish
         env:
-          MAVEN_OPTS: -XX:MaxRAMPercentage=25.0
+          MAVEN_OPTS: -XX:MaxRAMPercentage=90.0
 
       - name: Create and push git tag
         run: |
@@ -415,11 +427,18 @@ Three things to understand about this replacement:
 1. The `install ... :publish` goal list is copied from the FINOS parent POM's
    `release.goals` property, which is what `release:perform` invoked. Publishing
    behaviour is unchanged.
-2. The surefire flags (`-DargLine`, `-DforkCount`, `-DreuseForks`,
-   `-Dsurefire.reports.directory`) were previously passed to `release:prepare`,
-   which ran `clean -N` and therefore never ran tests — they did nothing there.
-   Tests genuinely run in this new step, as they did inside `release:perform`,
-   so the flags now take effect.
+2. The step reproduces what `release:perform` actually ran, which is why
+   `MAVEN_OPTS` is `90.0` and why no surefire fork overrides appear.
+   The old `Prepare release` step carried `MAVEN_OPTS: -XX:MaxRAMPercentage=25.0`
+   plus `-DargLine`, `-DforkCount`, `-DreuseForks` and
+   `-Dsurefire.reports.directory`, but it ran `clean -N` and compiled nothing, so
+   none of that had any effect. The step that really compiled, tested and
+   deployed was `Perform release`, at `MAVEN_OPTS: -XX:MaxRAMPercentage=90.0`
+   with no fork overrides. Carrying the `25.0` forward would cut the real build's
+   heap from ~6.3 GB to ~1.75 GB on a standard runner; carrying the fork
+   overrides forward as well would oversubscribe RAM (3 test forks at 25% each
+   plus Maven at 90%). Take the `Perform release` values, not the
+   `Prepare release` ones.
 3. Order is publish → tag → bump on purpose. If publishing fails there is no
    tag and no bump commit, so a retry is a plain re-run with no cleanup.
 
@@ -597,7 +616,11 @@ grep -n "github.repository == 'finos/legend-pure'" .github/workflows/build.yml
 ```
 
 Expected: two `OK` lines; **no output** from the two `grep`s that hunt for the
-old mechanism; and one matching line for the new build guard.
+old mechanism; and **two** matching lines for the last grep — the new `build`
+job guard, plus the pre-existing `Sonar` step, which already carried an
+identical `github.repository == 'finos/legend-pure'` condition and must be left
+untouched. Confirm the first match is the `build` job's `if:` near the top of
+the file; do not "fix" the count by narrowing the grep.
 
 - [ ] **Step 4: Commit**
 
@@ -784,7 +807,10 @@ After all four tasks, from a clean tree:
       returns nothing.
 - [ ] `git status --porcelain` is empty — in particular, no stray
       `.flattened-pom.xml` and no `9.9.9-TEST` leftovers.
-- [ ] `git log --oneline -4` shows the four task commits.
+- [ ] `git log --oneline -5` shows the four task commits (Task 2 landed as two:
+      the rewrite plus a follow-up restoring the release build's heap).
+- [ ] `. /home/aziem/bin/jdk11.sh` was sourced before every `mvn` command — see
+      Global Constraints. Builds run with the wrong `JAVA_HOME` otherwise.
 - [ ] Delete the scratch file: `rm -f /tmp/verify-ci-friendly.sh`.
 
 ## Known Limits of This Verification
