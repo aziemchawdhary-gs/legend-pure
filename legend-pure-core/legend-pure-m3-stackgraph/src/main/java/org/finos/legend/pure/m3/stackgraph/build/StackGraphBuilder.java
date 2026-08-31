@@ -258,17 +258,33 @@ public final class StackGraphBuilder
     // superclass) pair, resolves the superclass's raw-type reference with THIS graph's own PathSearch —
     // legitimate: it queries the stack graph we just built, never Pure's resolvedNode/resolvedProperty/
     // resolvedEnum (the global constraint only forbids reading Pure's own resolved answer) — and, when
-    // exactly one target is found and that target's memberScope lives in the SAME file subgraph (cross-
-    // file member inheritance isn't modeled by this spike; FileSubgraph.addEdge forbids the cross-file
-    // edge a different-file target would require), links memberScope directly to the superclass's OWN
-    // memberScope (a SCOPE node, which never completes a search). This replaces the earlier design of
-    // linking memberScope to the head of a fresh NAME-reference push chain: that chain terminates at the
-    // superclass's OWN definition pop, which is also the direct target of ordinary name lookups — so an
-    // empty-stack class-name search that spuriously kept exploring past its own completion (PathSearch
-    // does not stop at a completion) could ride that chain to a second, wrong completion at the
-    // superclass. Linking scope-to-scope instead means inherited-MEMBER lookups (which always arrive here
-    // with a non-empty stack, via classMemberScopes — see buildPropertyStubReference) still fall through
-    // correctly, while a plain class-name lookup (empty stack) has nothing left to traverse.
+    // exactly one target is found, links memberScope directly to the superclass's OWN memberScope (a
+    // SCOPE node, which never completes a search) — but ONLY if that memberScope lives in the SAME
+    // FileSubgraph as the subclass, since FileSubgraph.addEdge forbids a cross-file edge. This replaces
+    // the earlier design of linking memberScope to the head of a fresh NAME-reference push chain: that
+    // chain terminates at the superclass's OWN definition pop, which is also the direct target of
+    // ordinary name lookups — so an empty-stack class-name search that spuriously kept exploring past its
+    // own completion (PathSearch does not stop at a completion) could ride that chain to a second, wrong
+    // completion at the superclass (the bug this fix removes; see the memberScope/defNode comment above).
+    //
+    // KNOWN LIMITATION (a real behavior change from the pre-Task-8 design, flagged by code review and
+    // corrected here — do not repeat the earlier, inaccurate claim that this "matches the prior code's
+    // same-file-only behavior"): the OLD code's same-file check
+    // (`f.getFileId().equals(head.getFileId())`, where `head` was the entry of a freshly-built
+    // NAME-reference chain) was structurally ALWAYS true — buildElementReference always builds that chain
+    // in the REFERENCING file `f` (the subclass's own file), regardless of where the superclass is
+    // actually defined — so the old code always added its edge, and a CROSS-FILE superclass was still
+    // reached, at SEARCH time, via PathSearch's root-judgment teleportation into the superclass's own
+    // file followed by the (buggy, since-removed) defNode->memberScope edge landing in that file's own
+    // memberScope. That accidental cross-file reach rode the exact bug this fix removes, so it is gone
+    // now: cross-file inherited-member fallthrough via classMemberScopes is NOT currently supported.
+    // Reproducing it without reintroducing the false-completion bug would need a new mechanism (e.g. a
+    // dedicated, non-completable member-lookup entry point per class, itself reachable through
+    // root-judgment) that this spike does not implement — a named limitation for the Task 10 findings doc
+    // and Phase 1 design, not invented here. Pinned by
+    // TestBuilderProperties#testCrossFileInheritedPropertyIsKnownLimitation. Unmeasured by the
+    // platform-wide parity harness because PropertyStub has 0 reachable platform instances there (see
+    // Task 8 report) and the module's other PropertyStub/generalization fixtures are same-file.
     private void linkGeneralizations()
     {
         CoreInstance importStubClass = this.processorSupport.package_getByUserPath(M3Paths.ImportStub);
