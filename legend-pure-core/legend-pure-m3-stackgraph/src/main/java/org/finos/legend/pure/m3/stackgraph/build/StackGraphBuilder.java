@@ -27,6 +27,7 @@ import org.finos.legend.pure.m3.navigation._package._Package;
 import org.finos.legend.pure.m3.navigation.imports.Imports;
 import org.finos.legend.pure.m3.serialization.runtime.Source;
 import org.finos.legend.pure.m3.serialization.runtime.SourceRegistry;
+import org.finos.legend.pure.m3.stackgraph.graph.EdgeKind;
 import org.finos.legend.pure.m3.stackgraph.graph.FileSubgraph;
 import org.finos.legend.pure.m3.stackgraph.graph.Node;
 import org.finos.legend.pure.m3.stackgraph.graph.NodeTag;
@@ -173,7 +174,30 @@ public final class StackGraphBuilder
 
     private Node sectionScope(CoreInstance importGroup)
     {
-        return null; // implemented in Task 4
+        return this.sectionScopes.getIfAbsentPutWithKey(importGroup, group ->
+        {
+            String fileId = group.getSourceInformation().getSourceId();
+            FileSubgraph f = fileFor(fileId);
+            Node scope = f.newScope();
+            addImportEdges(f, scope, group);
+            CoreInstance coreImport = this.processorSupport.package_getByUserPath(M3Paths.coreImport);
+            if ((coreImport != null) && (coreImport != group))
+            {
+                addImportEdges(f, scope, coreImport);
+            }
+            f.addEdge(scope, f.getRoot(), EdgeKind.FALLBACK); // root-level lookup, ordered last by policy
+            return scope;
+        });
+    }
+
+    private void addImportEdges(FileSubgraph f, Node scope, CoreInstance importGroup)
+    {
+        importGroup.getValueForMetaPropertyToMany(M3Properties.imports).forEach(imp ->
+        {
+            String path = imp.getValueForMetaPropertyToOne(M3Properties.path).getName();
+            Node head = pushChainToTarget(f, splitPath(path), f.getRoot());
+            f.addEdge(scope, head, EdgeKind.IMPORT);
+        });
     }
 
     private Node pushChainToTarget(FileSubgraph f, ListIterable<String> parts, Node target)
