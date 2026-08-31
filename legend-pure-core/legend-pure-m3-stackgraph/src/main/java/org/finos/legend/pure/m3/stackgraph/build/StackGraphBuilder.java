@@ -134,10 +134,96 @@ public final class StackGraphBuilder
                     addMemberPop(f, memberScope, p.getName(), p));
             element.getValueForMetaPropertyToMany(M3Properties.qualifiedProperties).forEach(qp ->
                     addMemberPop(f, memberScope, qp.getValueForMetaPropertyToOne(M3Properties.name).getName(), qp));
+            if (isTemporal(element))
+            {
+                Node allVersions = f.newPop("allVersions", element, NodeTag.MILESTONING);
+                f.addEdge(memberScope, allVersions);
+            }
             addGeneralizationEdges(f, memberScope, element);
+            // Fallthrough (Task 7): a member lookup that a PropertyStub push chain lands on directly
+            // (see buildPropertyStubReference below) enters this memberScope node without ever passing
+            // through this file's root, so it cannot reach cross-file association-contributed property
+            // pops (those hang off popChain(assocFile, classPath) in the ASSOCIATION's own file
+            // subgraph). Re-push the class's own qualified path and re-enter this file's root so an
+            // unmatched member lookup can ride PathSearch's root-judgment virtual edges into other
+            // files' pop chains, including association candidates. Ordered last (FALLBACK) so a direct
+            // member/generalization match is always preferred.
+            String classPath = PackageableElement.getUserPathForPackageableElement(element);
+            Node classPathReentry = pushChainToTarget(f, splitPath(classPath), f.getRoot());
+            f.addEdge(memberScope, classPathReentry, EdgeKind.FALLBACK);
             this.classMemberScopes.put(element, memberScope);
         }
-        // Task 7 adds Association
+        else if (Instance.instanceOf(element, M3Paths.Association, this.processorSupport))
+        {
+            ListIterable<? extends CoreInstance> props = element.getValueForMetaPropertyToMany(M3Properties.properties);
+            if (props.size() == 2)
+            {
+                addAssociationContribution(f, element, props.get(0), props.get(1));
+                addAssociationContribution(f, element, props.get(1), props.get(0));
+            }
+        }
+    }
+
+    // property belongs to the class named by otherProperty's type
+    private void addAssociationContribution(FileSubgraph f, CoreInstance association, CoreInstance property, CoreInstance otherProperty)
+    {
+        CoreInstance importStubClass = this.processorSupport.package_getByUserPath(M3Paths.ImportStub);
+        CoreInstance genericType = otherProperty.getValueForMetaPropertyToOne(M3Properties.genericType);
+        CoreInstance rawType = (genericType == null) ? null : genericType.getValueForMetaPropertyToOne(M3Properties.rawType);
+        if ((rawType == null) || (rawType.getClassifier() != importStubClass))
+        {
+            return;
+        }
+        String writtenName = rawType.getValueForMetaPropertyToOne(M3Properties.idOrPath).getName();
+        MutableList<String> written = splitPath(writtenName);
+        MutableList<MutableList<String>> candidates = Lists.mutable.empty();
+        if (written.size() > 1)
+        {
+            candidates.add(written); // qualified: exact
+        }
+        else
+        {
+            CoreInstance importGroup = rawType.getValueForMetaPropertyToOne(M3Properties.importGroup);
+            if (importGroup != null)
+            {
+                collectImportPrefixCandidates(importGroup, written.getFirst(), candidates);
+                CoreInstance coreImport = this.processorSupport.package_getByUserPath(M3Paths.coreImport);
+                if (coreImport != null)
+                {
+                    collectImportPrefixCandidates(coreImport, written.getFirst(), candidates);
+                }
+            }
+            candidates.add(written); // bare root-level name, last
+        }
+        candidates.forEach(candidate ->
+        {
+            Node classPop = popChain(f, candidate);
+            Node propPop = f.newPop(property.getName(), property, NodeTag.ASSOCIATION_CANDIDATE);
+            f.addEdge(classPop, propPop);
+        });
+    }
+
+    private void collectImportPrefixCandidates(CoreInstance importGroup, String simpleName, MutableList<MutableList<String>> candidates)
+    {
+        importGroup.getValueForMetaPropertyToMany(M3Properties.imports).forEach(imp ->
+        {
+            String path = imp.getValueForMetaPropertyToOne(M3Properties.path).getName();
+            candidates.add(splitPath(path).with(simpleName));
+        });
+    }
+
+    private boolean isTemporal(CoreInstance element)
+    {
+        CoreInstance importStubClass = this.processorSupport.package_getByUserPath(M3Paths.ImportStub);
+        return element.getValueForMetaPropertyToMany(M3Properties.stereotypes).anySatisfy(st ->
+        {
+            if (st.getClassifier() != importStubClass)
+            {
+                return false;
+            }
+            String id = st.getValueForMetaPropertyToOne(M3Properties.idOrPath).getName();
+            return id.endsWith("@businesstemporal") || id.endsWith("@processingtemporal") || id.endsWith("@bitemporal");
+        });
     }
 
     private void addGeneralizationEdges(FileSubgraph f, Node memberScope, CoreInstance element)
