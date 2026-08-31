@@ -16,9 +16,11 @@ package org.finos.legend.pure.m3.stackgraph.build;
 
 import org.eclipse.collections.api.factory.Lists;
 import org.eclipse.collections.api.factory.Maps;
+import org.eclipse.collections.api.factory.Sets;
 import org.eclipse.collections.api.list.ListIterable;
 import org.eclipse.collections.api.list.MutableList;
 import org.eclipse.collections.api.map.MutableMap;
+import org.eclipse.collections.api.set.MutableSet;
 import org.finos.legend.pure.m3.navigation.Instance;
 import org.finos.legend.pure.m3.navigation.M3Paths;
 import org.finos.legend.pure.m3.navigation.M3Properties;
@@ -33,6 +35,9 @@ import org.finos.legend.pure.m3.stackgraph.graph.FileSubgraph;
 import org.finos.legend.pure.m3.stackgraph.graph.Node;
 import org.finos.legend.pure.m3.stackgraph.graph.NodeTag;
 import org.finos.legend.pure.m3.stackgraph.graph.StackGraph;
+import org.finos.legend.pure.m3.stackgraph.search.PathResult;
+import org.finos.legend.pure.m3.stackgraph.search.PathSearch;
+import org.finos.legend.pure.m3.stackgraph.search.SearchResult;
 import org.finos.legend.pure.m4.ModelRepository;
 import org.finos.legend.pure.m4.coreinstance.CoreInstance;
 import org.finos.legend.pure.m4.tools.GraphNodeIterable;
@@ -50,6 +55,7 @@ import org.finos.legend.pure.m4.tools.GraphNodeIterable;
 public final class StackGraphBuilder
 {
     public static final String TOP_LEVEL_FILE_ID = "/::topLevel::";
+    private static final String ROOT_PACKAGE_SYMBOL = "::"; // bare `::` root-package-reference syntax (Task 8 gap fix)
 
     private final ModelRepository repository;
     private final ProcessorSupport processorSupport;
@@ -59,6 +65,7 @@ public final class StackGraphBuilder
     private final MutableMap<String, Node> popChains = Maps.mutable.empty();        // fileId + " " + path -> pop node
     private final MutableMap<CoreInstance, Node> sectionScopes = Maps.mutable.empty(); // ImportGroup -> scope node (Task 4)
     private final MutableMap<CoreInstance, Node> classMemberScopes = Maps.mutable.empty(); // Class -> member scope node (Task 6)
+    private final MutableList<PendingGeneralization> pendingGeneralizations = Lists.mutable.empty(); // Task 8 gap fix
 
     public StackGraphBuilder(ModelRepository repository, ProcessorSupport processorSupport)
     {
@@ -70,6 +77,7 @@ public final class StackGraphBuilder
     {
         buildSpecialTypes();
         sourceRegistry.getSources().forEach(this::buildDefinitions);
+        linkGeneralizations();
         collectAndBuildReferences();
         return new BuiltGraph(this.graph, this.referenceNodes, this.skipped, new TestAccess());
     }
@@ -128,8 +136,20 @@ public final class StackGraphBuilder
         }
         else if (Instance.instanceOf(element, M3Paths.Class, this.processorSupport))
         {
+            // Empirical finding (Task 8 gap iteration): memberScope must NOT be reachable from defNode.
+            // PathSearch keeps exploring a state's outgoing edges even after recording a completion at
+            // that state (stack empty at a definition pop), so a plain qualified/unqualified NAME lookup
+            // for this class (which legitimately completes at defNode with an empty stack) would also
+            // walk any PUSH-based edge hung off memberScope (generalization fallthrough, in particular)
+            // with that SAME empty stack — restarting a brand-new, unrelated name search that can
+            // spuriously complete a SECOND time at some other class (observed for CC_Address, which
+            // "extends CC_GeographicEntity": resolving a plain reference to CC_Address surfaced BOTH
+            // CC_Address and CC_GeographicEntity as candidates, an over-approximation the real Pure
+            // resolver never sees). memberScope is only ever meant to be entered while still looking for
+            // a MEMBER symbol (i.e., with a non-empty stack) — that entry happens exclusively via
+            // classMemberScopes (see buildPropertyStubReference below), never via defNode, so this edge
+            // was pure liability with no legitimate use.
             Node memberScope = f.newScope();
-            f.addEdge(defNode, memberScope);
             element.getValueForMetaPropertyToMany(M3Properties.properties).forEach(p ->
                     addMemberPop(f, memberScope, p.getName(), p));
             element.getValueForMetaPropertyToMany(M3Properties.qualifiedProperties).forEach(qp ->
@@ -139,7 +159,7 @@ public final class StackGraphBuilder
                 Node allVersions = f.newPop("allVersions", element, NodeTag.MILESTONING);
                 f.addEdge(memberScope, allVersions);
             }
-            addGeneralizationEdges(f, memberScope, element);
+            this.pendingGeneralizations.add(new PendingGeneralization(f, memberScope, element));
             // Fallthrough (Task 7): a member lookup that a PropertyStub push chain lands on directly
             // (see buildPropertyStubReference below) enters this memberScope node without ever passing
             // through this file's root, so it cannot reach cross-file association-contributed property
@@ -152,6 +172,8 @@ public final class StackGraphBuilder
             // FALLBACK would conflate "no import matched" provenance with "cross-file reentry
             // over-approximation" provenance, which Task 8 must measure separately via
             // NodeTag.ASSOCIATION_CANDIDATE on the contributed pop itself, not via usedFallbackEdge().
+            // Safe from the defNode->memberScope bug above: this reentry is only reachable via
+            // classMemberScopes (non-empty stack), never from defNode directly.
             String classPath = PackageableElement.getUserPathForPackageableElement(element);
             Node classPathReentry = pushChainToTarget(f, splitPath(classPath), f.getRoot());
             f.addEdge(memberScope, classPathReentry);
@@ -230,10 +252,28 @@ public final class StackGraphBuilder
         });
     }
 
-    private void addGeneralizationEdges(FileSubgraph f, Node memberScope, CoreInstance element)
+    // Task 8 gap fix: runs once, after every file's definitions (and therefore every class's
+    // memberScope/classMemberScopes entry) are built, so a superclass declared later in source-registry
+    // iteration order than its subclass is still resolvable here. For each pending (subclass memberScope,
+    // superclass) pair, resolves the superclass's raw-type reference with THIS graph's own PathSearch —
+    // legitimate: it queries the stack graph we just built, never Pure's resolvedNode/resolvedProperty/
+    // resolvedEnum (the global constraint only forbids reading Pure's own resolved answer) — and, when
+    // exactly one target is found and that target's memberScope lives in the SAME file subgraph (cross-
+    // file member inheritance isn't modeled by this spike; FileSubgraph.addEdge forbids the cross-file
+    // edge a different-file target would require), links memberScope directly to the superclass's OWN
+    // memberScope (a SCOPE node, which never completes a search). This replaces the earlier design of
+    // linking memberScope to the head of a fresh NAME-reference push chain: that chain terminates at the
+    // superclass's OWN definition pop, which is also the direct target of ordinary name lookups — so an
+    // empty-stack class-name search that spuriously kept exploring past its own completion (PathSearch
+    // does not stop at a completion) could ride that chain to a second, wrong completion at the
+    // superclass. Linking scope-to-scope instead means inherited-MEMBER lookups (which always arrive here
+    // with a non-empty stack, via classMemberScopes — see buildPropertyStubReference) still fall through
+    // correctly, while a plain class-name lookup (empty stack) has nothing left to traverse.
+    private void linkGeneralizations()
     {
         CoreInstance importStubClass = this.processorSupport.package_getByUserPath(M3Paths.ImportStub);
-        element.getValueForMetaPropertyToMany(M3Properties.generalizations).forEach(generalization ->
+        PathSearch search = new PathSearch(this.graph);
+        this.pendingGeneralizations.forEach(pending -> pending.element.getValueForMetaPropertyToMany(M3Properties.generalizations).forEach(generalization ->
         {
             CoreInstance genericType = generalization.getValueForMetaPropertyToOne(M3Properties.general);
             CoreInstance rawType = (genericType == null) ? null : genericType.getValueForMetaPropertyToOne(M3Properties.rawType);
@@ -248,11 +288,36 @@ public final class StackGraphBuilder
                 return;
             }
             Node head = buildElementReference(importGroup, splitPath(superName), Lists.immutable.empty());
-            if ((head != null) && f.getFileId().equals(head.getFileId()))
+            if (head == null)
             {
-                f.addEdge(memberScope, head);
+                return;
             }
-        });
+            SearchResult result = search.resolve(head);
+            MutableSet<CoreInstance> targets = result.getResults().collect(PathResult::getDefinition, Sets.mutable.empty());
+            if (targets.size() != 1)
+            {
+                return; // structurally unresolved/ambiguous at the graph level — leave the fallthrough ungapped
+            }
+            Node superMemberScope = this.classMemberScopes.get(targets.getAny());
+            if ((superMemberScope != null) && pending.f.getFileId().equals(superMemberScope.getFileId()))
+            {
+                pending.f.addEdge(pending.memberScope, superMemberScope);
+            }
+        }));
+    }
+
+    private static final class PendingGeneralization
+    {
+        private final FileSubgraph f;
+        private final Node memberScope;
+        private final CoreInstance element;
+
+        private PendingGeneralization(FileSubgraph f, Node memberScope, CoreInstance element)
+        {
+            this.f = f;
+            this.memberScope = memberScope;
+            this.element = element;
+        }
     }
 
     private void addMemberPop(FileSubgraph f, Node owner, String name, CoreInstance definition)
@@ -273,6 +338,19 @@ public final class StackGraphBuilder
                 top.addEdge(top.getRoot(), pop);
             }
         });
+        // Task 8 gap fix: the bare `::` root-package-reference syntax (idOrPath "::", e.g.
+        // `assertIs(::, pathToElement('::'))`) parses to an ImportStub whose idOrPath contains a colon,
+        // which ImportStub.resolvePackageableElement (M3Paths dispatch on idOrPath.lastIndexOf(':') != -1)
+        // treats as import-independent, resolving straight to the Root package — mirrored here with an
+        // explicit ROOT_PACKAGE_SYMBOL pop so buildImportStubReference (below) can route it the same way
+        // SPECIAL_TYPES are routed, instead of splitPath("::") degrading into two empty-string path
+        // segments with no matching pop chain (observed: 27/27 platform-wide NOT_FOUND for idOrPath "::").
+        CoreInstance rootPackage = this.repository.getTopLevel(M3Paths.Root);
+        if (rootPackage != null)
+        {
+            Node rootPop = top.newPop(ROOT_PACKAGE_SYMBOL, rootPackage, NodeTag.NONE);
+            top.addEdge(top.getRoot(), rootPop);
+        }
     }
 
     private void collectAndBuildReferences()
@@ -311,7 +389,15 @@ public final class StackGraphBuilder
         int pct = idOrPath.indexOf('%');
         int tilde = idOrPath.indexOf('~');
         Node ref;
-        if (at != -1)
+        if (ROOT_PACKAGE_SYMBOL.equals(idOrPath))
+        {
+            // Bare `::` root-package reference (e.g. `assertIs(::, pathToElement('::'))`): idOrPath
+            // contains a colon, so ImportStub.resolvePackageableElement resolves it straight to the Root
+            // package, import-independent (M3Paths dispatch on idOrPath.lastIndexOf(':') != -1). splitPath
+            // would otherwise turn "::" into two empty-string path segments with no matching pop chain.
+            ref = buildElementReference(importGroup, Lists.immutable.with(ROOT_PACKAGE_SYMBOL), Lists.immutable.empty());
+        }
+        else if (at != -1)
         {
             ref = buildElementReference(importGroup, splitPath(idOrPath.substring(0, at)),
                     Lists.immutable.with("@", idOrPath.substring(at + 1)));
@@ -425,7 +511,7 @@ public final class StackGraphBuilder
         FileSubgraph f = fileFor(fileId);
         MutableList<String> parts = Lists.mutable.<String>empty().withAll(pathParts).withAll(memberSuffix);
         boolean qualified = pathParts.size() > 1;
-        if (qualified || _Package.SPECIAL_TYPES.contains(pathParts.getFirst()))
+        if (qualified || _Package.SPECIAL_TYPES.contains(pathParts.getFirst()) || ROOT_PACKAGE_SYMBOL.equals(pathParts.getFirst()))
         {
             return pushChainToTarget(f, parts, f.getRoot());
         }

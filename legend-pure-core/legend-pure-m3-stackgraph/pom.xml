@@ -38,6 +38,12 @@
             <groupId>org.eclipse.collections</groupId>
             <artifactId>eclipse-collections-api</artifactId>
         </dependency>
+        <!-- Not referenced directly by main sources (which use only eclipse-collections-api), but
+             required transitively at compile time: GraphNodeIterable (legend-pure-m4) extends
+             org.eclipse.collections.impl.lazy.AbstractLazySpliterable, so javac needs the impl jar
+             on the compile classpath to resolve that supertype. It's also used directly by the Task 8
+             parity harness (ParityReport's MutableObjectIntMap/MutableLongList counters via
+             ObjectIntMaps/LongLists) — kept at compile scope; see ignoredNonTestScopedDependencies below. -->
         <dependency>
             <groupId>org.eclipse.collections</groupId>
             <artifactId>eclipse-collections</artifactId>
@@ -68,9 +74,15 @@
                         <configuration>
                             <!-- The dependency plugin analyzer raises these as false positives -->
                             <ignoredUnusedDeclaredDependencies>
-                                <dependency>org.eclipse.collections:eclipse-collections</dependency>
                                 <dependency>org.finos.legend.pure:legend-pure-m3-core</dependency>
                             </ignoredUnusedDeclaredDependencies>
+                            <!-- eclipse-collections is only directly used (bytecode-visible) by the
+                                 test-only Task 8 parity harness, but must stay compile-scoped: main
+                                 sources need it transitively at javac time (see dependency comment
+                                 above), which the analyzer's bytecode scan can't see. -->
+                            <ignoredNonTestScopedDependencies>
+                                <dependency>org.eclipse.collections:eclipse-collections</dependency>
+                            </ignoredNonTestScopedDependencies>
                         </configuration>
                     </execution>
                 </executions>
