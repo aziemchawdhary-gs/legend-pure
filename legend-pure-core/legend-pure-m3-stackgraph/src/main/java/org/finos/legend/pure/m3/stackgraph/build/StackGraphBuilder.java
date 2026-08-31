@@ -58,6 +58,7 @@ public final class StackGraphBuilder
     private final MutableMap<CoreInstance, String> skipped = Maps.mutable.empty();
     private final MutableMap<String, Node> popChains = Maps.mutable.empty();        // fileId + " " + path -> pop node
     private final MutableMap<CoreInstance, Node> sectionScopes = Maps.mutable.empty(); // ImportGroup -> scope node (Task 4)
+    private final MutableMap<CoreInstance, Node> classMemberScopes = Maps.mutable.empty(); // Class -> member scope node (Task 6)
 
     public StackGraphBuilder(ModelRepository repository, ProcessorSupport processorSupport)
     {
@@ -125,7 +126,43 @@ public final class StackGraphBuilder
             element.getValueForMetaPropertyToMany(M3Properties.nonCanonicalUnits).forEach(unit ->
                     addMemberPop(f, tildePop, unit.getName(), unit));
         }
-        // Task 6 adds Class; Task 7 adds Association
+        else if (Instance.instanceOf(element, M3Paths.Class, this.processorSupport))
+        {
+            Node memberScope = f.newScope();
+            f.addEdge(defNode, memberScope);
+            element.getValueForMetaPropertyToMany(M3Properties.properties).forEach(p ->
+                    addMemberPop(f, memberScope, p.getName(), p));
+            element.getValueForMetaPropertyToMany(M3Properties.qualifiedProperties).forEach(qp ->
+                    addMemberPop(f, memberScope, qp.getValueForMetaPropertyToOne(M3Properties.name).getName(), qp));
+            addGeneralizationEdges(f, memberScope, element);
+            this.classMemberScopes.put(element, memberScope);
+        }
+        // Task 7 adds Association
+    }
+
+    private void addGeneralizationEdges(FileSubgraph f, Node memberScope, CoreInstance element)
+    {
+        CoreInstance importStubClass = this.processorSupport.package_getByUserPath(M3Paths.ImportStub);
+        element.getValueForMetaPropertyToMany(M3Properties.generalizations).forEach(generalization ->
+        {
+            CoreInstance genericType = generalization.getValueForMetaPropertyToOne(M3Properties.general);
+            CoreInstance rawType = (genericType == null) ? null : genericType.getValueForMetaPropertyToOne(M3Properties.rawType);
+            if ((rawType == null) || (rawType.getClassifier() != importStubClass))
+            {
+                return; // e.g. implicit generalization to Any resolved at parse — no members to model
+            }
+            String superName = rawType.getValueForMetaPropertyToOne(M3Properties.idOrPath).getName();
+            CoreInstance importGroup = rawType.getValueForMetaPropertyToOne(M3Properties.importGroup);
+            if (importGroup == null)
+            {
+                return;
+            }
+            Node head = buildElementReference(importGroup, splitPath(superName), Lists.immutable.empty());
+            if ((head != null) && f.getFileId().equals(head.getFileId()))
+            {
+                f.addEdge(memberScope, head);
+            }
+        });
     }
 
     private void addMemberPop(FileSubgraph f, Node owner, String name, CoreInstance definition)
@@ -152,6 +189,7 @@ public final class StackGraphBuilder
     {
         CoreInstance importStubClass = this.processorSupport.package_getByUserPath(M3Paths.ImportStub);
         CoreInstance enumStubClass = this.processorSupport.package_getByUserPath(M3Paths.EnumStub);
+        CoreInstance propertyStubClass = this.processorSupport.package_getByUserPath(M3Paths.PropertyStub);
         GraphNodeIterable.fromModelRepository(this.repository).forEach(node ->
         {
             if (node.getClassifier() == importStubClass)
@@ -162,7 +200,10 @@ public final class StackGraphBuilder
             {
                 buildEnumStubReference(node);
             }
-            // Task 6: PropertyStub
+            else if (node.getClassifier() == propertyStubClass)
+            {
+                buildPropertyStubReference(node);
+            }
         });
     }
 
@@ -229,6 +270,30 @@ public final class StackGraphBuilder
         {
             this.skipped.put(stub, "enum-no-reference-chain");
         }
+    }
+
+    // Empirical finding (Task 6): unlike ImportStub-typed raw-type positions, PropertyStub.owner is
+    // NOT left as an ImportStub for the treepath-based projection grammar ("+[a, b]") exercised here.
+    // RootRouteNodePostProcessor.resolvePropertyStub (treepath/RootRouteNodePostProcessor.java:295)
+    // sets it directly to the already-post-processed projected-from Class via _ownerCoreInstance(_class)
+    // before the PropertyStub itself is resolved. So the builder locates that class's own member scope
+    // (recorded in classMemberScopes when the Class branch above ran) and pushes the property name
+    // straight onto it — a same-file push chain that still exercises the generalization push chain for
+    // properties declared on a superclass, exactly as the type-dependent lookup in the paper describes.
+    private void buildPropertyStubReference(CoreInstance stub)
+    {
+        CoreInstance owner = stub.getValueForMetaPropertyToOne(M3Properties.owner);
+        Node memberScope = (owner == null) ? null : this.classMemberScopes.get(owner);
+        if (memberScope == null)
+        {
+            this.skipped.put(stub, "property-stub-owner-without-member-scope");
+            return;
+        }
+        String propertyName = stub.getValueForMetaPropertyToOne(M3Properties.propertyName).getName();
+        FileSubgraph f = fileFor(memberScope.getFileId());
+        Node push = f.newPush(propertyName);
+        f.addEdge(push, memberScope);
+        this.referenceNodes.put(stub, push);
     }
 
     /**
