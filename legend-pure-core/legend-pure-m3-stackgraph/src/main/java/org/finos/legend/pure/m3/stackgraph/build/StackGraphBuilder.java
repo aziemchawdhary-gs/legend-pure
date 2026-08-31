@@ -273,16 +273,43 @@ public final class StackGraphBuilder
     }
 
     // Empirical finding (Task 6): unlike ImportStub-typed raw-type positions, PropertyStub.owner is
-    // NOT left as an ImportStub for the treepath-based projection grammar ("+[a, b]") exercised here.
+    // NOT left as an ImportStub. There is exactly one PropertyStub construction site in m3-core
+    // (AntlrContextToM3CoreInstance.java:3619, backing the treepath "+[a, b]" grammar that class/
+    // association projections use); it always passes owner=null at parse time, and
     // RootRouteNodePostProcessor.resolvePropertyStub (treepath/RootRouteNodePostProcessor.java:295)
-    // sets it directly to the already-post-processed projected-from Class via _ownerCoreInstance(_class)
-    // before the PropertyStub itself is resolved. So the builder locates that class's own member scope
-    // (recorded in classMemberScopes when the Class branch above ran) and pushes the property name
-    // straight onto it — a same-file push chain that still exercises the generalization push chain for
-    // properties declared on a superclass, exactly as the type-dependent lookup in the paper describes.
+    // always fills it in with the already-post-processed projected-from Class via
+    // _ownerCoreInstance(_class) before the PropertyStub itself is resolved. So this holds for every
+    // PropertyStub in the codebase, not just the fixture shape exercised by TestBuilderProperties: the
+    // builder locates that class's own member scope (recorded in classMemberScopes when the Class
+    // branch above ran) and pushes the property name straight onto it — a same-file push chain that
+    // still exercises the generalization push chain for properties declared on a superclass, exactly
+    // as the type-dependent lookup in the paper describes.
+    //
+    // Consequence for the parity harness: because FileSubgraph.addEdge forbids cross-file edges, this
+    // push node lives in the OWNER CLASS's file subgraph, not the PropertyStub's own source file (they
+    // can differ, e.g. the projection here in use.pure referencing a property declared in defs.pure).
+    // Every other reference builder in this class (buildImportStubReference, buildEnumStubReference)
+    // instead builds its push chain in the *referencing* file and relies on PathSearch's root-judgment
+    // rule (every file root has a virtual edge to every other file root) to cross into the defining
+    // file. The PropertyStub category therefore never exercises that cross-file root-judgment path —
+    // it reaches the target member scope directly, in-file, because the owner class is already known
+    // by identity rather than by name+import lookup. Task 8's parity harness should treat "PropertyStub
+    // resolved via classMemberScopes" as a distinct, simpler category from the ImportStub/EnumStub
+    // root-judgment categories when comparing coverage.
     private void buildPropertyStubReference(CoreInstance stub)
     {
         CoreInstance owner = stub.getValueForMetaPropertyToOne(M3Properties.owner);
+        CoreInstance importStubClass = this.processorSupport.package_getByUserPath(M3Paths.ImportStub);
+        if ((owner != null) && (owner.getClassifier() == importStubClass))
+        {
+            // Believed unreachable: the single PropertyStub construction site always leaves owner=null
+            // at parse time, and RootRouteNodePostProcessor always resolves it to the actual owning
+            // Class before the stub itself is resolved (see comment above) — so owner should never be
+            // an unresolved ImportStub by the time this builder walks the model. Guarded defensively in
+            // case a future DSL grammar constructs a PropertyStub differently.
+            this.skipped.put(stub, "property-stub-owner-unresolved-import-stub");
+            return;
+        }
         Node memberScope = (owner == null) ? null : this.classMemberScopes.get(owner);
         if (memberScope == null)
         {
