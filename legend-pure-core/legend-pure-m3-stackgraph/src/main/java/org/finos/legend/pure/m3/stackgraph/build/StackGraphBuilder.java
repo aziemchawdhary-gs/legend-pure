@@ -19,6 +19,7 @@ import org.eclipse.collections.api.factory.Maps;
 import org.eclipse.collections.api.list.ListIterable;
 import org.eclipse.collections.api.list.MutableList;
 import org.eclipse.collections.api.map.MutableMap;
+import org.finos.legend.pure.m3.navigation.Instance;
 import org.finos.legend.pure.m3.navigation.M3Paths;
 import org.finos.legend.pure.m3.navigation.M3Properties;
 import org.finos.legend.pure.m3.navigation.PackageableElement.PackageableElement;
@@ -96,7 +97,41 @@ public final class StackGraphBuilder
     private void registerDefinition(FileSubgraph f, Node defNode, CoreInstance element)
     {
         f.setDefinition(defNode, element);
-        // Task 5+: addMemberGadgets(f, defNode, element);
+        if (Instance.instanceOf(element, M3Paths.Enumeration, this.processorSupport))
+        {
+            element.getValueForMetaPropertyToMany(M3Properties.values).forEach(value ->
+                    addMemberPop(f, defNode, value.getName(), value));
+        }
+        else if (Instance.instanceOf(element, M3Paths.Profile, this.processorSupport))
+        {
+            Node atPop = f.newPop("@");
+            f.addEdge(defNode, atPop);
+            element.getValueForMetaPropertyToMany(M3Properties.p_stereotypes).forEach(st ->
+                    addMemberPop(f, atPop, st.getValueForMetaPropertyToOne(M3Properties.value).getName(), st));
+            Node pctPop = f.newPop("%");
+            f.addEdge(defNode, pctPop);
+            element.getValueForMetaPropertyToMany(M3Properties.p_tags).forEach(tag ->
+                    addMemberPop(f, pctPop, tag.getValueForMetaPropertyToOne(M3Properties.value).getName(), tag));
+        }
+        else if (Instance.instanceOf(element, M3Paths.Measure, this.processorSupport))
+        {
+            Node tildePop = f.newPop("~");
+            f.addEdge(defNode, tildePop);
+            CoreInstance canonical = element.getValueForMetaPropertyToOne(M3Properties.canonicalUnit);
+            if (canonical != null)
+            {
+                addMemberPop(f, tildePop, canonical.getName(), canonical);
+            }
+            element.getValueForMetaPropertyToMany(M3Properties.nonCanonicalUnits).forEach(unit ->
+                    addMemberPop(f, tildePop, unit.getName(), unit));
+        }
+        // Task 6 adds Class; Task 7 adds Association
+    }
+
+    private void addMemberPop(FileSubgraph f, Node owner, String name, CoreInstance definition)
+    {
+        Node pop = f.newPop(name, definition, NodeTag.NONE);
+        f.addEdge(owner, pop);
     }
 
     private void buildSpecialTypes()
@@ -116,13 +151,18 @@ public final class StackGraphBuilder
     private void collectAndBuildReferences()
     {
         CoreInstance importStubClass = this.processorSupport.package_getByUserPath(M3Paths.ImportStub);
+        CoreInstance enumStubClass = this.processorSupport.package_getByUserPath(M3Paths.EnumStub);
         GraphNodeIterable.fromModelRepository(this.repository).forEach(node ->
         {
             if (node.getClassifier() == importStubClass)
             {
                 buildImportStubReference(node);
             }
-            // Task 5: EnumStub; Task 6: PropertyStub
+            else if (node.getClassifier() == enumStubClass)
+            {
+                buildEnumStubReference(node);
+            }
+            // Task 6: PropertyStub
         });
     }
 
@@ -135,13 +175,30 @@ public final class StackGraphBuilder
             this.skipped.put(stub, "no-import-group");
             return;
         }
-        // Task 5 extends this dispatch for '@' / '%' / '~' member references
-        if ((idOrPath.indexOf('@') != -1) || (idOrPath.indexOf('%') != -1) || (idOrPath.indexOf('~') != -1))
+        // Delimiter dispatch mirrors ImportStub.java:42-44 (STEREOTYPE_STUB_DELIM / TAG_STUB_DELIM / UNIT_STUB_DELIM)
+        int at = idOrPath.indexOf('@');
+        int pct = idOrPath.indexOf('%');
+        int tilde = idOrPath.indexOf('~');
+        Node ref;
+        if (at != -1)
         {
-            this.skipped.put(stub, "delimiter-not-yet-modeled");
-            return;
+            ref = buildElementReference(importGroup, splitPath(idOrPath.substring(0, at)),
+                    Lists.immutable.with("@", idOrPath.substring(at + 1)));
         }
-        Node ref = buildElementReference(importGroup, splitPath(idOrPath), Lists.immutable.empty());
+        else if (pct != -1)
+        {
+            ref = buildElementReference(importGroup, splitPath(idOrPath.substring(0, pct)),
+                    Lists.immutable.with("%", idOrPath.substring(pct + 1)));
+        }
+        else if (tilde != -1)
+        {
+            ref = buildElementReference(importGroup, splitPath(idOrPath.substring(0, tilde)),
+                    Lists.immutable.with("~", idOrPath.substring(tilde + 1)));
+        }
+        else
+        {
+            ref = buildElementReference(importGroup, splitPath(idOrPath), Lists.immutable.empty());
+        }
         if (ref != null)
         {
             this.referenceNodes.put(stub, ref);
@@ -149,6 +206,28 @@ public final class StackGraphBuilder
         else
         {
             this.skipped.put(stub, "no-section-scope"); // only reachable after Task 4 adds the unqualified branch
+        }
+    }
+
+    private void buildEnumStubReference(CoreInstance stub)
+    {
+        CoreInstance enumerationStub = stub.getValueForMetaPropertyToOne(M3Properties.enumeration);
+        String enumName = stub.getValueForMetaPropertyToOne(M3Properties.enumName).getName();
+        if ((enumerationStub == null) || (enumerationStub.getValueForMetaPropertyToOne(M3Properties.importGroup) == null))
+        {
+            this.skipped.put(stub, "enum-stub-without-import-group");
+            return;
+        }
+        String idOrPath = enumerationStub.getValueForMetaPropertyToOne(M3Properties.idOrPath).getName();
+        CoreInstance importGroup = enumerationStub.getValueForMetaPropertyToOne(M3Properties.importGroup);
+        Node ref = buildElementReference(importGroup, splitPath(idOrPath), Lists.immutable.with(enumName));
+        if (ref != null)
+        {
+            this.referenceNodes.put(stub, ref);
+        }
+        else
+        {
+            this.skipped.put(stub, "enum-no-reference-chain");
         }
     }
 
