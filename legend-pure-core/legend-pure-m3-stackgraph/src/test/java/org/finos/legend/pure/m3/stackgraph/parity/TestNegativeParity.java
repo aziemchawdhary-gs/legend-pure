@@ -80,6 +80,7 @@ public class TestNegativeParity extends AbstractPureTestWithCoreCompiled
         }
         catch (Exception expected)
         {
+            Assert.assertTrue(expected.getMessage(), expected.getMessage().contains("StackGraphSpikeMissing"));
             runtime.delete("bad.pure");
             runtime.compile();
         }
