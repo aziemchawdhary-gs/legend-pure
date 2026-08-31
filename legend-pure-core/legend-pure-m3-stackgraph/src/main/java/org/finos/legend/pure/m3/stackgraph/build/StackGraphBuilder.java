@@ -50,7 +50,11 @@ import org.finos.legend.pure.m4.tools.GraphNodeIterable;
  * Builder code reads only parse-time information from the graph (element structure, package
  * paths, stub {@code idOrPath}/{@code importGroup}, import group contents) — it never reads
  * {@code resolvedNode}/{@code resolvedEnum}/{@code resolvedProperty} or any back-reference
- * property; those are reserved for the parity harness's expected answers.</p>
+ * property; those are reserved for the parity harness's expected answers. One known exception:
+ * for temporal (milestoned) classes, the {@code properties}/{@code qualifiedProperties} lists
+ * read here have already been mutated by {@code MilestoningPropertyProcessor} (a post-processing
+ * pass) by the time the builder runs, so the member-scope pops built for a milestoned class
+ * reflect post-processed, not raw parse-time, structure.</p>
  */
 public final class StackGraphBuilder
 {

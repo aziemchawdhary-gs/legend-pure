@@ -128,6 +128,21 @@ public class TestNegativeParity extends AbstractPureTestWithCoreCompiled
     public void testQualifiedNameIgnoresImports()
     {
         compileTestSource("d1.pure", "Class spikepkg::negA::StackGraphSpikeQual {}\n");
+        // Pure side
+        try
+        {
+            compileTestSource("bad.pure",
+                    "import spikepkg::negA::*;\n" +
+                    "Class spikepkg::neg::StackGraphSpikeQualUser\n{\n   p : wrong::StackGraphSpikeQual[1];\n}\n");
+            Assert.fail("expected compilation failure");
+        }
+        catch (Exception expected)
+        {
+            Assert.assertTrue(expected.getMessage(), expected.getMessage().contains("StackGraphSpikeQual"));
+            runtime.delete("bad.pure");
+            runtime.compile();
+        }
+        // stack graph side: same imports, synthetic reference
         compileTestSource("ok.pure",
                 "import spikepkg::negA::*;\n" +
                 "Class spikepkg::neg::StackGraphSpikeQualAnchor {}\n");
