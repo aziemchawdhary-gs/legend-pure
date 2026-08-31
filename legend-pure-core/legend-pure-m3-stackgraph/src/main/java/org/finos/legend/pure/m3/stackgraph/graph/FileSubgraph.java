@@ -75,6 +75,15 @@ public final class FileSubgraph
         return register(new Node(NodeKind.POP, symbol, this.fileId, definition, tag));
     }
 
+    public void setDefinition(Node node, CoreInstance definition)
+    {
+        if (node.getKind() != NodeKind.POP)
+        {
+            throw new IllegalArgumentException("Definition may only be set on POP nodes: " + node);
+        }
+        node.setDefinition(definition);
+    }
+
     public void addEdge(Node source, Node target)
     {
         addEdge(source, target, EdgeKind.NORMAL);

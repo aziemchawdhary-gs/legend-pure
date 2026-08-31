@@ -24,7 +24,7 @@ public final class Node
     private final NodeKind kind;
     private final String symbol;      // null for ROOT/SCOPE
     private final String fileId;
-    private final CoreInstance definition; // POP only, nullable
+    private CoreInstance definition; // POP only, nullable
     private final NodeTag tag;
 
     Node(NodeKind kind, String symbol, String fileId, CoreInstance definition, NodeTag tag)
@@ -54,6 +54,15 @@ public final class Node
     public CoreInstance getDefinition()
     {
         return this.definition;
+    }
+
+    void setDefinition(CoreInstance definition)
+    {
+        if ((this.definition != null) && (this.definition != definition))
+        {
+            throw new IllegalStateException("Definition already set for " + this + ": " + this.definition + " (attempted to set " + definition + ")");
+        }
+        this.definition = definition;
     }
 
     public NodeTag getTag()
