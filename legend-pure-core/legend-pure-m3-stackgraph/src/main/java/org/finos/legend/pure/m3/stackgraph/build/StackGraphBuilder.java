@@ -146,11 +146,15 @@ public final class StackGraphBuilder
             // pops (those hang off popChain(assocFile, classPath) in the ASSOCIATION's own file
             // subgraph). Re-push the class's own qualified path and re-enter this file's root so an
             // unmatched member lookup can ride PathSearch's root-judgment virtual edges into other
-            // files' pop chains, including association candidates. Ordered last (FALLBACK) so a direct
-            // member/generalization match is always preferred.
+            // files' pop chains, including association candidates. Uses NORMAL edge kind (not
+            // FALLBACK): FALLBACK is reserved for sectionScope's own root-level fallback, which
+            // PureResolutionPolicy partitions on in qualified=false mode; tagging this reentry edge
+            // FALLBACK would conflate "no import matched" provenance with "cross-file reentry
+            // over-approximation" provenance, which Task 8 must measure separately via
+            // NodeTag.ASSOCIATION_CANDIDATE on the contributed pop itself, not via usedFallbackEdge().
             String classPath = PackageableElement.getUserPathForPackageableElement(element);
             Node classPathReentry = pushChainToTarget(f, splitPath(classPath), f.getRoot());
-            f.addEdge(memberScope, classPathReentry, EdgeKind.FALLBACK);
+            f.addEdge(memberScope, classPathReentry);
             this.classMemberScopes.put(element, memberScope);
         }
         else if (Instance.instanceOf(element, M3Paths.Association, this.processorSupport))
