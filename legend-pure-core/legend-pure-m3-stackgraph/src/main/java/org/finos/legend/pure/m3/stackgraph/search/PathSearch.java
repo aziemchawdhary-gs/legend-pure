@@ -27,7 +27,7 @@ import org.finos.legend.pure.m3.stackgraph.graph.NodeKind;
 import org.finos.legend.pure.m3.stackgraph.graph.StackGraph;
 
 /**
- * <p>EXPERIMENTAL — Phase 0 stack-graphs parity spike. Not for production use; no module may depend on this one.</p>
+ * <p>INTERNAL — experimental stack-graphs work. No module outside legend-pure-m3-stackgraph may depend on this.</p>
  */
 public final class PathSearch
 {

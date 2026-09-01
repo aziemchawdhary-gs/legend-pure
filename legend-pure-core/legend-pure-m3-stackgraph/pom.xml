@@ -22,7 +22,7 @@
     </parent>
     <modelVersion>4.0.0</modelVersion>
 
-    <name>Legend Pure - Core - M3 Stack Graph (EXPERIMENTAL spike)</name>
+    <name>Legend Pure - Core - M3 Stack Graph (internal)</name>
     <artifactId>legend-pure-m3-stackgraph</artifactId>
 
     <dependencies>

@@ -43,7 +43,7 @@ import org.finos.legend.pure.m4.coreinstance.CoreInstance;
 import org.finos.legend.pure.m4.tools.GraphNodeIterable;
 
 /**
- * <p>EXPERIMENTAL — Phase 0 stack-graphs parity spike. Not for production use; no module may depend on this one.</p>
+ * <p>INTERNAL — experimental stack-graphs work. No module outside legend-pure-m3-stackgraph may depend on this.</p>
  *
  * <p>Builds a {@link StackGraph} from the compiled Pure model: definitions, special (primitive
  * plus {@code Package}) types, and qualified {@code ImportStub} references in this first slice.
@@ -370,6 +370,14 @@ public final class StackGraphBuilder
         {
             Node rootPop = top.newPop(ROOT_PACKAGE_SYMBOL, rootPackage, NodeTag.NONE);
             top.addEdge(top.getRoot(), rootPop);
+            // Phase 1 parity-harness finding: the bare, unqualified identifier "Root" (idOrPath "Root",
+            // no colons — e.g. `assertIs(Root, pathToElement('Root'))`) is a distinct case from the `::`
+            // syntax above. Per _Package.isTopLevelName, "Root" is a recognized top-level symbol exactly
+            // like the SPECIAL_TYPES names (primitives, Package), but _Package.SPECIAL_TYPES itself never
+            // includes "Root" — mirrored here with its own pop so an unqualified NAME lookup for "Root"
+            // resolves the same way SPECIAL_TYPES names do (see TestBuilderPackages#testBareRootIdentifierResolves).
+            Node rootNamePop = top.newPop(M3Paths.Root, rootPackage, NodeTag.NONE);
+            top.addEdge(top.getRoot(), rootNamePop);
         }
     }
 
@@ -583,14 +591,29 @@ public final class StackGraphBuilder
     {
         Node current = f.getRoot();
         StringBuilder key = new StringBuilder(f.getFileId()).append(' ');
+        StringBuilder path = new StringBuilder();
         for (String part : parts)
         {
             key.append("::").append(part);
+            if (path.length() > 0)
+            {
+                path.append("::");
+            }
+            path.append(part);
             Node parent = current;
+            String pkgPath = path.toString();
             current = this.popChains.getIfAbsentPutWithKey(key.toString(), k ->
             {
                 Node pop = f.newPop(part);
                 f.addEdge(parent, pop);
+                // Package-definition gadget (Phase 1, findings revision #1): if this path names an
+                // existing Package, attach it as the pop's definition. Read-only lookup — packages
+                // already exist in the compiled runtime; getByUserPath here never creates.
+                CoreInstance pkg = _Package.getByUserPath(pkgPath, this.processorSupport);
+                if ((pkg != null) && _Package.isPackage(pkg, this.processorSupport))
+                {
+                    f.setDefinition(pop, pkg);
+                }
                 return pop;
             });
         }

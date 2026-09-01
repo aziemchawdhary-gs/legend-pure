@@ -24,7 +24,7 @@ import org.finos.legend.pure.m3.stackgraph.search.SearchResult;
 import org.finos.legend.pure.m4.coreinstance.CoreInstance;
 
 /**
- * <p>EXPERIMENTAL — Phase 0 stack-graphs parity spike. Not for production use; no module may depend on this one.</p>
+ * <p>INTERNAL — experimental stack-graphs work. No module outside legend-pure-m3-stackgraph may depend on this.</p>
  *
  * <p>Mirrors {@code ImportStub.resolvePackageableElement}: qualified names ignore imports; unqualified
  * names take import hits first (0 hits fall back to root-level elements; 2+ distinct targets are

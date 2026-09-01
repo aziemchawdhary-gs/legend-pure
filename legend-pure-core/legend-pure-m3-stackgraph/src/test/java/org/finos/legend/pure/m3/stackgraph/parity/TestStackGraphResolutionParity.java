@@ -100,6 +100,8 @@ public class TestStackGraphResolutionParity extends AbstractPureTestWithCoreComp
         int importStubTotal = report.grandTotal("ImportStub");
         Assert.assertTrue("ImportStub match ratio below 99.9%: " + matches + "/" + importStubTotal,
                 matches >= (importStubTotal * 0.999));
+        Assert.assertEquals("Package-definition gadget should have eliminated all ImportStub NOT_FOUNDs", 0,
+                report.total("ImportStub", ParityReport.ParityOutcome.NOT_FOUND));
     }
 
     private void checkStub(CoreInstance stub, String kind, String resolvedProperty, BuiltGraph built,
