@@ -148,6 +148,7 @@ paths are always equivalent from a user's perspective.
 | [Compiler Pipeline](architecture/compiler-pipeline.md) | Parse → post-process → validate → serialize → code-gen, compiled vs interpreted engines |
 | [Dependency & Technology Stack](architecture/tech-stack.md) | Third-party libraries, version management, and technology rationale |
 | [Domain & Key Concepts](architecture/domain-concepts.md) | Core domain model, glossary, and design patterns |
+| [Pure Packages & Namespaces](architecture/packages-and-namespaces.md) | The package tree as part of the graph, implicit packages, top-level names, sections/imports, repositories, and the self-describing M-layer bootstrap |
 | [Pure Language Reference](reference/pure-language-reference.md) | Syntax, types, multiplicity, collections, comments and documentation, milestoning, standard library |
 | [Legend Grammar Reference](reference/legend-grammar-reference.md) | Index, quick-reference tables, and a complete `###Pure` + `###Relational` + `###Mapping` example |
 | [Mapping Grammar Reference](reference/mapping-grammar-reference.md) | `###Mapping` — class mappings, enumeration mappings, association mappings, set IDs, embedded/inline/otherwise, XStore, aggregation-aware, local properties |
