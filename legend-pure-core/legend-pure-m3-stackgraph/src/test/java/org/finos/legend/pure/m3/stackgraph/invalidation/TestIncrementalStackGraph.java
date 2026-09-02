@@ -57,6 +57,14 @@ import org.junit.Test;
  * one that touches its own owner file, so that a <em>second</em> remove/restore of the same target file
  * still force-invalidates the dependent (see {@link IncrementalStackGraph}'s "Unresolved-stub retry"
  * javadoc).</p>
+ *
+ * <p>{@link #testIdentityFallbackCatchesSameCycleDeleteRecreateWithIdenticalContent()} covers Task 9's
+ * Cause 4 (a further corpus finding, distinct from both gaps above): a source deleted and recreated with
+ * byte-identical content <em>before either {@code invalidate()} or {@code compiled()} ever observes the
+ * intermediate state</em> (no intervening {@code compile()} at all — content-hash-only diffing sees no
+ * change at all here, unlike the accumulate-until-consumed amendment's target, which does have an
+ * intervening {@code invalidate()} via a failed compile). See {@link IncrementalStackGraph}'s "Decision
+ * rule 2" javadoc for the identity-fallback fix this drives.</p>
  */
 public class TestIncrementalStackGraph extends AbstractPureTestWithCoreCompiled
 {
@@ -84,7 +92,7 @@ public class TestIncrementalStackGraph extends AbstractPureTestWithCoreCompiled
     public void cleanRuntime()
     {
         for (String id : new String[] {"a.pure", "b.pure", "delpure.pure", "ccfi_t.pure", "ccfi_m.pure", "ccfi_l.pure",
-                "rmtgt_t.pure", "rmtgt_m.pure", "acc.pure", "retry_t.pure", "retry_m.pure"})
+                "rmtgt_t.pure", "rmtgt_m.pure", "acc.pure", "retry_t.pure", "retry_m.pure", "identity.pure"})
         {
             if (runtime.getSourceById(id) != null)
             {
@@ -316,5 +324,46 @@ public class TestIncrementalStackGraph extends AbstractPureTestWithCoreCompiled
                     baseline.computeInvalidation(Sets.mutable.with("retry_t.pure")).contains(mElement));
             baseline.consumeChangedFiles();
         }
+    }
+
+    @Test
+    public void testIdentityFallbackCatchesSameCycleDeleteRecreateWithIdenticalContent()
+    {
+        // Task 9 Cause 4 regression: delete a source and recreate it with byte-identical content with NO
+        // compile() call in between -- both registry mutations happen inside one window that
+        // applySourceChanges never gets to observe mid-way through, so by the time it finally runs, the
+        // file's content hash matches what was last recorded. Content-fingerprint-only diffing would see
+        // "no change" here even though the real compiler produced a brand-new CoreInstance for the
+        // recreated element (its own toProcess/toUnbind bookkeeping is driven by the explicit delete()/
+        // createInMemorySource() calls, not by content hashing). The identity fallback must catch this by
+        // comparing current top-level packageable elements against the recorded set by CoreInstance
+        // identity.
+        String content = "Class spikepkg::inc::StackGraphSpikeIncIdentityFallback {}\n";
+        compileTestSource("identity.pure", content);
+        baseline.applySourceChanges(runtime.getSourceRegistry());
+        baseline.consumeChangedFiles();
+
+        CoreInstance original = processorSupport.package_getByUserPath("spikepkg::inc::StackGraphSpikeIncIdentityFallback");
+        Assert.assertNotNull(original);
+
+        // Delete + recreate with identical content, both BEFORE any applySourceChanges call -- the
+        // "single, unobserved window" this fix targets.
+        runtime.delete("identity.pure");
+        runtime.createInMemorySource("identity.pure", content);
+        runtime.compile();
+
+        CoreInstance recreated = processorSupport.package_getByUserPath("spikepkg::inc::StackGraphSpikeIncIdentityFallback");
+        Assert.assertNotNull(recreated);
+        Assert.assertNotSame("the recreated element must be a genuinely new CoreInstance despite identical content",
+                original, recreated);
+
+        baseline.applySourceChanges(runtime.getSourceRegistry());
+        Assert.assertTrue("identity fallback must flag the file as changed even though its content fingerprint is unchanged",
+                baseline.getLastChangedFiles().contains("identity.pure"));
+
+        MutableSet<CoreInstance> invalidated = baseline.computeInvalidation(Sets.mutable.with("identity.pure"));
+        Assert.assertTrue("the recreated element must be invalidated (a seed via current elementsByFile)",
+                invalidated.contains(recreated));
+        baseline.consumeChangedFiles();
     }
 }

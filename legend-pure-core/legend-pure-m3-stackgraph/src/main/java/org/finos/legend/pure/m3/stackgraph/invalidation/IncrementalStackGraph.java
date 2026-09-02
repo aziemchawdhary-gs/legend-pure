@@ -21,6 +21,7 @@ import org.eclipse.collections.api.list.MutableList;
 import org.eclipse.collections.api.map.MutableMap;
 import org.eclipse.collections.api.set.MutableSet;
 import org.eclipse.collections.api.set.SetIterable;
+import org.finos.legend.pure.m3.navigation.PackageableElement.PackageableElement;
 import org.finos.legend.pure.m3.navigation.ProcessorSupport;
 import org.finos.legend.pure.m3.serialization.runtime.Source;
 import org.finos.legend.pure.m3.serialization.runtime.SourceRegistry;
@@ -60,10 +61,36 @@ import org.finos.legend.pure.m4.coreinstance.SourceInformation;
  * {@link #applySourceChanges} cycle is milliseconds, dominated by the full-graph rebuild's linear pass
  * over all sources rather than by stub resolution, which touches only the handful of affected stubs.</p>
  *
- * <h2>Decision rule 2 — content fingerprint</h2>
+ * <h2>Decision rule 2 — content fingerprint, plus identity fallback (Task 9 second amendment)</h2>
  * <p>{@link Source#getContent()} exists, so file-change detection uses {@code
- * source.getContent().hashCode()} per file (the brief's preferred mechanism) — no element-list-identity
- * fallback is needed.</p>
+ * source.getContent().hashCode()} per file (the brief's original preferred mechanism) as the primary
+ * signal. This alone is blind to one case: a source deleted and recreated with byte-identical content
+ * <em>inside a single, unobserved window</em> — i.e. with no {@code invalidate()}/{@code compiled()} call
+ * in between (a same-cycle {@code deleteSource}+{@code createInMemorySource} with no intervening {@code
+ * compile()}, unlike the accumulate-until-consumed amendment's target, which spans a <em>failed</em>
+ * compile and so does have an intervening {@code invalidate()}). The real compiler's own
+ * {@code toProcess}/{@code toUnbind} bookkeeping is driven by explicit mutation calls, not content
+ * hashing, so it correctly reprocesses the file (producing new {@link CoreInstance} objects) regardless of
+ * whether the text nets out unchanged — the content-fingerprint-only diff would miss this entirely. {@link
+ * #applySourceChanges} therefore also compares, for <em>every</em> file (not only ones the fingerprint
+ * already flags), the <em>identity</em> set of its current top-level packageable elements ({@link
+ * Source#getNewInstances()}, filtered to {@link
+ * org.finos.legend.pure.m3.navigation.PackageableElement.PackageableElement#isPackageableElement}, {@link
+ * CoreInstance} identity — never {@code equals}/content comparison, matching every other identity
+ * assumption in this class) against {@link #newInstancesByFile}'s prior recording for that file (updated,
+ * for every file, on every call, regardless of outcome): any difference (an object present in one set but
+ * not the other) means the file's declarations churned even though its text did not, and the file is
+ * treated as changed exactly like a fingerprint mismatch. Deliberately compared against {@link
+ * #newInstancesByFile} — a baseline populated purely from {@link Source#getNewInstances()} — rather than
+ * against {@link #elementsByFile} (populated from {@code StackGraphBuilder}'s {@code ElementSpanIndex}, a
+ * <em>different</em> enumeration of "this file's elements"): an early version of this fix compared against
+ * {@link #elementsByFile} directly and produced a false positive on a platform bootstrap file whose
+ * `ElementSpanIndex` view did not agree element-for-element with its `getNewInstances()` view even though
+ * nothing about it had changed — comparing a mechanism's output only against its <em>own</em> prior output
+ * avoids that class of mismatch entirely. This check is cheap (a small list read plus a set comparison per
+ * file, not a resolution) and a no-op for the common case (an untouched file's {@code getNewInstances()}
+ * keeps returning the same objects it always has, since it only changes when that exact {@link Source}
+ * object is reparsed).</p>
  *
  * <h2>Cross-file cache-invalidation contract</h2>
  * <p>A {@code targetFile → stubs} side map, rebuilt alongside the cache each cycle (a cheap map pass,
@@ -168,6 +195,12 @@ public final class IncrementalStackGraph
 
     private BuiltGraph built;
     private final MutableMap<String, Integer> contentFingerprints = Maps.mutable.empty();
+    // Decision rule 2's identity-fallback baseline (see class javadoc): the packageable elements each
+    // Source#getNewInstances() returned as of the most recent applySourceChanges call that observed it —
+    // deliberately a separate map from elementsByFile (which is populated from StackGraphBuilder's
+    // ElementSpanIndex, a different enumeration), so the identity comparison is always against a prior
+    // value from the SAME mechanism.
+    private final MutableMap<String, MutableSet<CoreInstance>> newInstancesByFile = Maps.mutable.empty();
     private final MutableMap<String, MutableSet<CoreInstance>> elementsByFile = Maps.mutable.empty();
     private final MutableMap<String, MutableSet<CoreInstance>> priorElementsByFile = Maps.mutable.empty();
     private final MutableMap<CoreInstance, ResolutionCache.Entry> entriesByStub = Maps.mutable.empty();
@@ -225,7 +258,22 @@ public final class IncrementalStackGraph
             currentIds.add(id);
             int fingerprint = fingerprintOf(source);
             Integer previous = this.contentFingerprints.get(id);
-            if ((previous == null) || (previous.intValue() != fingerprint))
+            boolean contentChanged = (previous == null) || (previous.intValue() != fingerprint);
+
+            // Decision rule 2's identity fallback (see class javadoc): compared against this class's OWN
+            // prior snapshot of Source#getNewInstances() — deliberately NOT against elementsByFile (which
+            // is populated from StackGraphBuilder's ElementSpanIndex, a different enumeration that need
+            // not agree element-for-element with getNewInstances(), as a real false positive on a platform
+            // bootstrap file demonstrated) — so both sides of the comparison come from the same mechanism,
+            // just at different points in time.
+            MutableSet<CoreInstance> currentPackageableInstances = packageableInstancesOf(source);
+            MutableSet<CoreInstance> recordedPackageableInstances = this.newInstancesByFile.get(id);
+            boolean identityChanged = (recordedPackageableInstances == null)
+                    ? currentPackageableInstances.notEmpty()
+                    : !recordedPackageableInstances.equals(currentPackageableInstances);
+            this.newInstancesByFile.put(id, currentPackageableInstances);
+
+            if (contentChanged || identityChanged)
             {
                 addedOrChanged.add(id);
             }
@@ -233,6 +281,7 @@ public final class IncrementalStackGraph
         }
         MutableSet<String> removed = Sets.mutable.withAll(this.contentFingerprints.keysView()).withoutAll(currentIds);
         removed.forEach(this.contentFingerprints::remove);
+        removed.forEach(this.newInstancesByFile::remove);
 
         MutableSet<String> touched = Sets.mutable.withAll(addedOrChanged).withAll(removed);
         if (touched.isEmpty())
@@ -449,6 +498,24 @@ public final class IncrementalStackGraph
     {
         String content = source.getContent();
         return (content == null) ? 0 : content.hashCode();
+    }
+
+    /**
+     * {@code source}'s current top-level packageable elements, per {@link Source#getNewInstances()}
+     * filtered to {@link PackageableElement#isPackageableElement} — the raw material for Decision rule 2's
+     * identity fallback (see class javadoc).
+     */
+    private MutableSet<CoreInstance> packageableInstancesOf(Source source)
+    {
+        MutableSet<CoreInstance> result = Sets.mutable.empty();
+        source.getNewInstances().forEach(instance ->
+        {
+            if (PackageableElement.isPackageableElement(instance, this.processorSupport))
+            {
+                result.add(instance);
+            }
+        });
+        return result;
     }
 
     private static String fileIdOf(CoreInstance element)
