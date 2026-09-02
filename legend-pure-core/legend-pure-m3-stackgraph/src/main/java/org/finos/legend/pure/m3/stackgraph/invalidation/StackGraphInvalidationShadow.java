@@ -43,15 +43,40 @@ import java.util.SortedMap;
  * CompilerEventHandler} purely as notification hooks.</p>
  *
  * <h2>Seed source (controller ruling)</h2>
- * <p>{@link #invalidate} is used <em>only</em> to accumulate the legacy ("old") answer's element paths —
- * it must never be read for this cycle's changed-file set. {@code invalidate()}'s instance set is the
- * walkers' full transitive unbind set, which includes dependents pulled in from other files; treating it
- * as "the changed files" would over-seed {@link IncrementalStackGraph#computeInvalidation} relative to
- * what a real caller would supply. Instead, {@link #compiled} seeds {@code computeInvalidation} from
- * {@link IncrementalStackGraph#getLastChangedFiles()} — the shadow's own content-fingerprint diff against
- * {@link org.finos.legend.pure.m3.serialization.runtime.SourceRegistry}, computed by {@link
- * IncrementalStackGraph#applySourceChanges} moments earlier in the same method, which already covers
- * added, changed, <em>and removed</em> files.</p>
+ * <p>{@link #invalidate}'s {@code consolidatedCoreInstances} parameter is used <em>only</em> to accumulate
+ * the legacy ("old") answer's element paths — it must never be read for this cycle's changed-file set.
+ * {@code invalidate()}'s instance set is the walkers' full transitive unbind set, which includes
+ * dependents pulled in from other files; treating it as "the changed files" would over-seed {@link
+ * IncrementalStackGraph#computeInvalidation} relative to what a real caller would supply. Instead, {@link
+ * #compiled} seeds {@code computeInvalidation} from {@link IncrementalStackGraph#getLastChangedFiles()} —
+ * the shadow's own content-fingerprint diff against {@link
+ * org.finos.legend.pure.m3.serialization.runtime.SourceRegistry}, which already covers added, changed,
+ * <em>and removed</em> files.</p>
+ *
+ * <h2>Accumulate-until-consumed diffs (Task 9 amendment)</h2>
+ * <p>The host {@code PureRuntime} does not invoke {@link #compiled} (and so does not reach the {@link
+ * IncrementalStackGraph#applySourceChanges} call below) when a compile ultimately fails validation, but it
+ * <em>does</em> invoke {@link #invalidate} unconditionally, earlier, during unbind — see
+ * {@code IncrementalCompiler_New.compile()}. A source-registry mutation (e.g. a delete) that happens
+ * inside such a failed cycle would previously go unobserved by {@link IncrementalStackGraph} until some
+ * later successful cycle, by which point its net content could match what it last recorded (e.g. a
+ * delete immediately followed, in a later cycle, by a restore with byte-identical content — the exact
+ * shape of the {@code compileWithExpectedCompileFailure}/revert idiom pervasive in m3-core's incremental
+ * test corpus), masking a real change entirely and producing a false {@code SHADOW_MISSING}. {@link
+ * #invalidate} therefore now also calls {@link IncrementalStackGraph#applySourceChanges} (before touching
+ * {@code oldAnswerPaths}), so a registry mutation is captured into {@link IncrementalStackGraph}'s pending
+ * sets the moment {@code invalidate()} next fires, even if that same compile then fails — this does not
+ * change the seed-source ruling above ({@code consolidatedCoreInstances} is still never read as a
+ * changed-file set); it only keeps {@link IncrementalStackGraph}'s own registry snapshot from going stale
+ * across a failed cycle. {@link #compiled} then does a final {@code applySourceChanges} sync, reads {@link
+ * IncrementalStackGraph#getLastChangedFiles()} and calls {@link IncrementalStackGraph#computeInvalidation},
+ * and only <em>after</em> that call — which reads {@link IncrementalStackGraph#getLastChangedFiles()}'s
+ * accompanying forced-invalidations — calls {@link IncrementalStackGraph#consumeChangedFiles} to clear
+ * both pending sets for the next cycle. {@code oldAnswerPaths} is unaffected by any of this: it already
+ * accumulates across a failed-then-retried sequence exactly the same way, since {@link #compiled}'s
+ * {@code finally} block (which clears it) only ever runs when {@code compiled()} itself runs — a failed
+ * cycle's {@code invalidate()} contributions simply carry over, intentionally, into the next successful
+ * cycle's comparison, matching {@link IncrementalStackGraph}'s own pending-set accumulation.</p>
  *
  * <h2>Element-path mapping</h2>
  * <p>Both the old answer (raw {@link CoreInstance}s from {@code invalidate()}) and the shadow answer
@@ -149,6 +174,11 @@ public final class StackGraphInvalidationShadow implements CompilerEventHandler
         try
         {
             ensureBuilt();
+            // Task 9 amendment: sync the registry diff here too, not only in compiled() — see class
+            // javadoc, "Accumulate-until-consumed diffs". invalidate() fires even on a compile that will
+            // go on to fail validation (compiled() will not), so this is the only reliable place to catch
+            // a registry mutation made during such a cycle before it is masked by a later cycle's diff.
+            this.inc.applySourceChanges(this.runtime.getSourceRegistry());
             consolidatedCoreInstances.forEach(instance -> this.oldAnswerPaths.add(pathFor(instance)));
         }
         catch (Throwable t)
@@ -169,9 +199,13 @@ public final class StackGraphInvalidationShadow implements CompilerEventHandler
         try
         {
             ensureBuilt();
-            this.inc.applySourceChanges(this.runtime.getSourceRegistry());
+            this.inc.applySourceChanges(this.runtime.getSourceRegistry()); // final sync for this cycle
             SetIterable<String> changedFiles = this.inc.getLastChangedFiles();
             MutableSet<CoreInstance> shadowInvalidated = this.inc.computeInvalidation(changedFiles);
+            // Only now, having read both the changed files and (via computeInvalidation) the pending
+            // forced invalidations, clear both pending sets for the next cycle — see
+            // IncrementalStackGraph#consumeChangedFiles's javadoc for why this ordering matters.
+            this.inc.consumeChangedFiles();
             MutableSet<String> shadowAnswerPaths = shadowInvalidated.collect(this::pathFor, Sets.mutable.empty());
             this.report.recordCycle(this.oldAnswerPaths, shadowAnswerPaths, this::classifierLookup);
         }

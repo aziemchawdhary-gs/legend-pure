@@ -17,6 +17,7 @@ package org.finos.legend.pure.m3.stackgraph.invalidation;
 import org.eclipse.collections.api.RichIterable;
 import org.eclipse.collections.api.factory.Sets;
 import org.eclipse.collections.api.set.MutableSet;
+import org.eclipse.collections.api.set.SetIterable;
 import org.finos.legend.pure.m3.navigation.PackageableElement.PackageableElement;
 import org.finos.legend.pure.m3.serialization.runtime.Source;
 import org.finos.legend.pure.m3.serialization.runtime.SourceRegistry;
@@ -33,10 +34,22 @@ import org.junit.Test;
  * <p>Task 7 TDD evidence: {@link #testEditRecomputesOnlyChangedFileAndInvalidatesDependents()} is the
  * brief's Step 1 test, kept verbatim (including its own fresh {@link IncrementalStackGraph#buildFull}
  * call, which is why it is the one test in this class that pays the full-platform baseline cost — see
- * class-level timing note below). The other two tests share one class-level {@code baseline} shadow
- * (built once in {@link #setUp()} over the bare platform, before any test fixture exists) and drive it
- * purely through {@link IncrementalStackGraph#applySourceChanges}, so they measure genuinely incremental
- * cycles rather than repeating the expensive baseline build.</p>
+ * class-level timing note below). The other tests share one class-level {@code baseline} shadow (built
+ * once in {@link #setUp()} over the bare platform, before any test fixture exists) and drive it purely
+ * through {@link IncrementalStackGraph#applySourceChanges}, so they measure genuinely incremental cycles
+ * rather than repeating the expensive baseline build. Because {@code baseline} is shared across every
+ * test method, and Task 9's accumulate-until-consumed amendment means {@link
+ * IncrementalStackGraph#getLastChangedFiles} no longer resets itself on every {@code applySourceChanges}
+ * call, {@link #setUp()}, {@link #cleanRuntime()}, and every "sync the freshly-created fixture into
+ * baseline" step inside a test method now explicitly call {@link
+ * IncrementalStackGraph#consumeChangedFiles} to give the test's own, actually-asserted-on cycle a clean
+ * starting pending set.</p>
+ *
+ * <p>{@link #testPendingChangesAccumulateAcrossCallsUntilConsumed()} is the Task 9 amendment's own unit
+ * test: two {@link IncrementalStackGraph#applySourceChanges} calls (one that finds a real change, one
+ * that finds nothing further changed) must both leave that first change visible via {@link
+ * IncrementalStackGraph#getLastChangedFiles} — it must not be silently dropped by the second, no-op
+ * call — and only {@link IncrementalStackGraph#consumeChangedFiles} clears it.</p>
  */
 public class TestIncrementalStackGraph extends AbstractPureTestWithCoreCompiled
 {
@@ -52,13 +65,19 @@ public class TestIncrementalStackGraph extends AbstractPureTestWithCoreCompiled
         // deliberate: cycle-time measurement is the task-report deliverable; SLF4J rule waived for
         // test-only spike/measurement reporting (see TestStackGraphResolutionParity for precedent).
         System.out.println("IncrementalStackGraph.buildFull (bare platform baseline): " + (nanos / 1_000_000) + " ms");
+        // Task 9 amendment: buildFull's own applySourceChanges call accumulates the whole bare-platform
+        // file set into the pending sets (see IncrementalStackGraph's "Accumulate-until-consumed diffs"
+        // javadoc) rather than replacing it per call as before. Consume it here so every test method
+        // below starts from an empty pending set, matching what each test's own getLastChangedFiles()
+        // assertions expect.
+        baseline.consumeChangedFiles();
     }
 
     @After
     public void cleanRuntime()
     {
         for (String id : new String[] {"a.pure", "b.pure", "delpure.pure", "ccfi_t.pure", "ccfi_m.pure", "ccfi_l.pure",
-                "rmtgt_t.pure", "rmtgt_m.pure"})
+                "rmtgt_t.pure", "rmtgt_m.pure", "acc.pure"})
         {
             if (runtime.getSourceById(id) != null)
             {
@@ -67,6 +86,10 @@ public class TestIncrementalStackGraph extends AbstractPureTestWithCoreCompiled
         }
         runtime.compile();
         baseline.applySourceChanges(runtime.getSourceRegistry());
+        // Same reasoning as setUp(): baseline is shared across every test method in this class, so its
+        // pending sets must be emptied between tests or a later test's getLastChangedFiles() assertion
+        // would see this cleanup's touched files (and any earlier test's unconsumed leftovers) too.
+        baseline.consumeChangedFiles();
     }
 
     @Test
@@ -97,6 +120,9 @@ public class TestIncrementalStackGraph extends AbstractPureTestWithCoreCompiled
         baseline.applySourceChanges(runtime.getSourceRegistry());
         Assert.assertTrue("file was just added, so it should have had no elements before this rebuild",
                 baseline.previousElements("delpure.pure").isEmpty());
+        // Consume the fixture-creation sync's pending state so the assertion below reflects only the
+        // delete cycle under test, not also this setup step (see setUp()'s comment).
+        baseline.consumeChangedFiles();
 
         CoreInstance delElement = processorSupport.package_getByUserPath("spikepkg::inc::StackGraphSpikeIncDel");
         Assert.assertNotNull(delElement);
@@ -131,6 +157,9 @@ public class TestIncrementalStackGraph extends AbstractPureTestWithCoreCompiled
         compileTestSource("ccfi_l.pure",
                 "Class spikepkg::inc::StackGraphSpikeIncCcfiL\n{\n   p : spikepkg::inc::StackGraphSpikeIncCcfiM[1];\n}\n");
         baseline.applySourceChanges(runtime.getSourceRegistry());
+        // Consume the fixture-creation sync's pending state (all three files) so the assertion below
+        // reflects only the target edit under test (see setUp()'s comment).
+        baseline.consumeChangedFiles();
 
         runtime.modify("ccfi_t.pure", "Class spikepkg::inc::StackGraphSpikeIncCcfiT { extra : String[1]; }\n");
         runtime.compile();
@@ -174,6 +203,9 @@ public class TestIncrementalStackGraph extends AbstractPureTestWithCoreCompiled
 
         CoreInstance mElement = processorSupport.package_getByUserPath("spikepkg::inc::StackGraphSpikeIncRmM");
         Assert.assertNotNull(mElement);
+        // Consume the fixture-creation sync's pending state (both files) so the assertion below reflects
+        // only the simulated target-removal cycle under test (see setUp()'s comment).
+        baseline.consumeChangedFiles();
 
         SourceRegistry live = runtime.getSourceRegistry();
         SourceRegistry withoutT = new SourceRegistry(live.getCodeStorage(), null)
@@ -195,5 +227,39 @@ public class TestIncrementalStackGraph extends AbstractPureTestWithCoreCompiled
         // No manual restore needed: @After deletes both real files and resyncs baseline via
         // applySourceChanges(runtime.getSourceRegistry()) — dropping rmtgt_m.pure's (now-unresolved)
         // entry cleanly regardless of its status, and rmtgt_t.pure is already untracked by baseline.
+    }
+
+    @Test
+    public void testPendingChangesAccumulateAcrossCallsUntilConsumed()
+    {
+        // Task 9 amendment coverage: applySourceChanges' pending sets must accumulate (set union) across
+        // multiple calls, not be replaced per call, so a real change found by an earlier call is not lost
+        // just because a later call — e.g. the "final sync" StackGraphInvalidationShadow.compiled() does
+        // on top of what invalidate() already synced — finds nothing further changed. This is exactly the
+        // shape of the corpus idiom this amendment fixes: a registry mutation observed during a
+        // since-failed compile cycle must survive, accumulated, into the next successful cycle's diff.
+        compileTestSource("acc.pure", "Class spikepkg::inc::StackGraphSpikeIncAcc {}\n");
+        baseline.applySourceChanges(runtime.getSourceRegistry());
+        baseline.consumeChangedFiles();
+
+        runtime.modify("acc.pure", "Class spikepkg::inc::StackGraphSpikeIncAcc { extra : String[1]; }\n");
+        runtime.compile();
+
+        // Call #1: a real change (acc.pure's content differs from the last consumed snapshot).
+        baseline.applySourceChanges(runtime.getSourceRegistry());
+        Assert.assertEquals("first call must record the changed file",
+                Sets.mutable.with("acc.pure"), baseline.getLastChangedFiles());
+
+        // Call #2: nothing changed since call #1 (registry untouched in between) — a cheap no-op per
+        // applySourceChanges' own javadoc, and critically must NOT clear what call #1 already found.
+        baseline.applySourceChanges(runtime.getSourceRegistry());
+        Assert.assertEquals("a no-op call must not clear an earlier not-yet-consumed call's pending change",
+                Sets.mutable.with("acc.pure"), baseline.getLastChangedFiles());
+
+        SetIterable<String> consumed = baseline.consumeChangedFiles();
+        Assert.assertEquals("consumeChangedFiles() must return exactly what was pending",
+                Sets.mutable.with("acc.pure"), consumed);
+        Assert.assertTrue("consumeChangedFiles() must clear the pending set for the next cycle",
+                baseline.getLastChangedFiles().isEmpty());
     }
 }

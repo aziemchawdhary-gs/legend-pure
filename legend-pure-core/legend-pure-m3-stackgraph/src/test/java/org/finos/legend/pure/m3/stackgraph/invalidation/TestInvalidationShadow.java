@@ -38,6 +38,14 @@ import org.junit.Test;
  * javadoc promises. It drives {@link StackGraphInvalidationShadow#invalidate} directly (no real compile
  * cycle needed — {@code invalidate()} is a plain public method) with a deliberately broken {@link
  * CoreInstance} that throws a bare {@link Error} from {@code getName()}.</p>
+ *
+ * <p>{@link #testShadowSurvivesCompileFailThenIdenticalRestoreIdiom()} is Task 9's end-to-end regression
+ * coverage for the corpus finding that motivated the "Accumulate-until-consumed diffs" amendment: delete a
+ * source that another compiled source depends on, compile (expecting failure), then restore the deleted
+ * source with byte-identical content and compile again (expecting success) — the exact idiom
+ * {@code RuntimeTestScriptBuilder.compileWithExpectedCompileFailure}-style m3-core incremental tests use
+ * pervasively. Before the amendment this produced a false, unexplained {@code SHADOW_MISSING} in assert
+ * mode; after it, the cycle must complete cleanly.</p>
  */
 public class TestInvalidationShadow extends AbstractPureTestWithCoreCompiled
 {
@@ -73,6 +81,52 @@ public class TestInvalidationShadow extends AbstractPureTestWithCoreCompiled
         {
             runtime.modify("a.pure", "Class spikepkg::shadow::StackGraphSpikeShA { q : String[1]; }\n");
             runtime.compile();   // assert mode: any unexplained SHADOW_MISSING throws here
+            StringBuilder out = new StringBuilder();
+            report.print(out);
+            Assert.assertTrue(out.toString(), report.unexplainedMissing().isEmpty());
+        }
+        finally
+        {
+            runtime.getIncrementalCompiler().removeCompilerEventHandler(shadow);
+        }
+    }
+
+    @Test
+    public void testShadowSurvivesCompileFailThenIdenticalRestoreIdiom()
+    {
+        // Task 9 amendment end-to-end coverage: the exact idiom pervasive in m3-core's incremental test
+        // corpus (RuntimeTestScriptBuilder.compileWithExpectedCompileFailure-style delete -> expect
+        // failure -> restore with byte-identical content -> compile again) previously produced a false
+        // SHADOW_MISSING, because IncrementalStackGraph.applySourceChanges only ran from compiled() (never
+        // invoked when the intervening compile fails validation), so by the time it finally ran again on
+        // the successful restore compile, the restored content matched what it had last recorded and it
+        // saw "no change". See StackGraphInvalidationShadow's "Accumulate-until-consumed diffs" javadoc.
+        compileTestSource("a.pure", "Class spikepkg::shadow::StackGraphSpikeShRestoreA {}\n");
+        compileTestSource("b.pure",
+                "Class spikepkg::shadow::StackGraphSpikeShRestoreB\n{\n   p : spikepkg::shadow::StackGraphSpikeShRestoreA[1];\n}\n");
+        DivergenceReport report = new DivergenceReport(DivergenceAllowlist.load(), true); // assert mode
+        StackGraphInvalidationShadow shadow = new StackGraphInvalidationShadow(runtime, report);
+        runtime.getIncrementalCompiler().addCompilerEventHandler(shadow);
+        try
+        {
+            String originalContent = "Class spikepkg::shadow::StackGraphSpikeShRestoreA {}\n";
+
+            runtime.delete("a.pure");
+            try
+            {
+                runtime.compile();
+                Assert.fail("expected a compile failure: b.pure still references the just-deleted a.pure");
+            }
+            catch (Exception expectedCompileFailure)
+            {
+                // Expected — b.pure's reference to spikepkg::shadow::StackGraphSpikeShRestoreA is now
+                // unresolved. The point of this test is what happens on the NEXT (successful) compile,
+                // not the exact shape of this failure.
+            }
+
+            runtime.createInMemorySource("a.pure", originalContent); // byte-identical to the original
+            runtime.compile(); // succeeds — assert mode: any unexplained SHADOW_MISSING throws here
+
             StringBuilder out = new StringBuilder();
             report.print(out);
             Assert.assertTrue(out.toString(), report.unexplainedMissing().isEmpty());

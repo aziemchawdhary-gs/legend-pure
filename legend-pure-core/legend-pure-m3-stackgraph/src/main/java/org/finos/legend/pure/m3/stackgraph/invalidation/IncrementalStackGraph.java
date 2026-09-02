@@ -78,10 +78,43 @@ import org.finos.legend.pure.m4.coreinstance.SourceInformation;
  * is never posted), and neither {@link #previousElements} nor the touched file's current elements name
  * that referrer (only its <em>target's</em> file was touched, not its own). Every stub identified via
  * this side map has, by definition, had its resolution potentially changed this cycle, so each such
- * stub's referring element is captured into a per-cycle {@code forcedInvalidations} set (replaced, not
- * accumulated, on every {@link #applySourceChanges} call — including a no-op one) and unioned into every
- * {@link #computeInvalidation} answer until the next call, closed transitively over the fresh index like
- * any other seed.</p>
+ * stub's referring element is folded into {@link #pendingForcedInvalidations} and unioned into every
+ * {@link #computeInvalidation} answer until {@link #consumeChangedFiles} next clears it.</p>
+ *
+ * <h2>Accumulate-until-consumed diffs (Task 9 amendment)</h2>
+ * <p>{@link #applySourceChanges} is safe — and, since Task 9, necessary — to call more than once per
+ * logical compile cycle: a call that finds nothing changed since the last call is a cheap no-op (early
+ * return, no rebuild). What changed on Task 9: {@link #pendingChangedFiles} and {@link
+ * #pendingForcedInvalidations} are no longer <em>replaced</em> on each call (which silently discarded
+ * whatever a prior call in the same not-yet-consumed cycle had found) — they <em>accumulate</em> (set
+ * union) across every {@link #applySourceChanges} call since the last {@link #consumeChangedFiles}, and
+ * a no-op call leaves them untouched rather than clearing them. This matters because the host {@code
+ * PureRuntime} does not call this shadow's {@code compiled()} hook (the only place a caller previously
+ * triggered {@link #applySourceChanges}) when a compile ultimately fails validation — {@code invalidate()}
+ * fires unconditionally, earlier, during unbind, but {@code compiled()}/{@code runEventHandlers} is
+ * skipped on the exception path. A source registry mutation (e.g. a delete) that happens inside such a
+ * failed cycle would previously go unobserved by this class until some <em>later</em> successful cycle,
+ * by which point its net content might match what this class last recorded (e.g. delete-then-restore
+ * with identical content) — masking a real change entirely. {@code StackGraphInvalidationShadow} now
+ * calls {@link #applySourceChanges} from <em>both</em> {@code invalidate()} and {@code compiled()}, so a
+ * registry mutation is captured into the pending sets the moment {@code invalidate()} next fires — even
+ * if that compile then fails — and survives, accumulated, until a later successful cycle's {@code
+ * compiled()} finally consumes it via {@link #consumeChangedFiles}. {@link #computeInvalidation} still
+ * takes an explicit {@code changedFileIds} argument and still unions {@link #pendingForcedInvalidations}
+ * into its seeds, but reads the field directly rather than being handed a per-call value — callers
+ * typically pass {@link #getLastChangedFiles} (a non-consuming read of {@link #pendingChangedFiles}) and
+ * must call {@link #consumeChangedFiles} afterward to clear both pending sets for the next cycle.</p>
+ *
+ * <p><b>Known residual limitation.</b> {@link #priorElementsByFile} is a per-file snapshot, not itself an
+ * accumulating union: if the <em>same</em> file is touched more than once before {@link
+ * #consumeChangedFiles} runs (e.g. edited, then edited again, across two failed cycles), {@link
+ * #previousElements} reflects only the most recent pre-rebuild snapshot, not the state from before the
+ * <em>first</em> of those touches — an element unique to that earliest state could be missed as a seed.
+ * This mirrors the class's pre-existing "NOT_FOUND is not reconsidered on later supply" gap below in
+ * spirit (an accepted asymmetry of the incremental design, not fixed by this amendment) and does not
+ * affect the corpus idiom this amendment targets (delete-then-restore touches the file exactly twice
+ * before consumption, but the restored element is captured via the file's <em>current</em> elements, not
+ * {@link #previousElements}, so the overwrite is immaterial there — see {@code TestInvalidationShadow}).</p>
  *
  * <h2>Identity-stability assumption</h2>
  * <p>Carrying forward cache entries for untouched files (rather than re-resolving the whole program) and
@@ -123,11 +156,16 @@ public final class IncrementalStackGraph
     private final MutableMap<CoreInstance, ResolutionCache.Entry> entriesByStub = Maps.mutable.empty();
     private final MutableMap<String, MutableSet<CoreInstance>> targetFileToStubs = Maps.mutable.empty();
     private InvertedIndex index = InvertedIndex.from(Lists.immutable.<ResolutionCache.Entry>empty());
-    private MutableSet<String> lastChangedFiles = Sets.mutable.empty();
-    // Referring elements whose cross-file cache entry was re-resolved THIS cycle (see class javadoc,
-    // "Cross-file cache-invalidation contract"). Replaced (not accumulated) on every applySourceChanges
-    // call, including a no-op one, and unioned into every computeInvalidation answer until the next call.
-    private MutableSet<CoreInstance> forcedInvalidations = Sets.mutable.empty();
+    // File ids found added/changed/removed by any applySourceChanges call since the last
+    // consumeChangedFiles() (see class javadoc, "Accumulate-until-consumed diffs") — accumulated (set
+    // union), not replaced, so a change observed during a since-failed compile cycle is not lost.
+    private final MutableSet<String> pendingChangedFiles = Sets.mutable.empty();
+    // Referring elements whose cross-file cache entry was re-resolved by any applySourceChanges call
+    // since the last consumeChangedFiles() (see class javadoc, "Cross-file cache-invalidation contract"
+    // and "Accumulate-until-consumed diffs"). Accumulated (set union), not replaced, across calls,
+    // including no-op ones (which leave it untouched), and unioned into every computeInvalidation answer
+    // until consumeChangedFiles() next clears it.
+    private final MutableSet<CoreInstance> pendingForcedInvalidations = Sets.mutable.empty();
 
     private IncrementalStackGraph(ModelRepository repository, ProcessorSupport processorSupport)
     {
@@ -151,7 +189,10 @@ public final class IncrementalStackGraph
      * previously-recorded state, then, for each added/changed/removed file: drops that file's element
      * registrations and cache entries and (for added/changed files) rebuilds them from the new source.
      * Also re-resolves cache entries belonging to <em>other</em> files whose cached target element lived
-     * in a changed/removed file. A no-op (no graph rebuild) if nothing changed.
+     * in a changed/removed file. A no-op (no graph rebuild, and — see class javadoc, "Accumulate-until-
+     * consumed diffs" — no change to {@link #pendingChangedFiles}/{@link #pendingForcedInvalidations},
+     * which are cleared only by {@link #consumeChangedFiles}) if nothing changed since the last call.
+     * Safe, and expected, to call more than once between two {@link #consumeChangedFiles} calls.
      */
     public void applySourceChanges(SourceRegistry registry)
     {
@@ -175,8 +216,9 @@ public final class IncrementalStackGraph
         MutableSet<String> touched = Sets.mutable.withAll(addedOrChanged).withAll(removed);
         if (touched.isEmpty())
         {
-            this.lastChangedFiles = Sets.mutable.empty();
-            this.forcedInvalidations = Sets.mutable.empty();
+            // Genuinely nothing changed since the last call: leave pendingChangedFiles/
+            // pendingForcedInvalidations exactly as they were (they accumulate across calls — see class
+            // javadoc, "Accumulate-until-consumed diffs" — only consumeChangedFiles() clears them).
             return;
         }
 
@@ -260,8 +302,11 @@ public final class IncrementalStackGraph
         this.index = InvertedIndex.from(this.entriesByStub.valuesView());
 
         this.built = newBuilt;
-        this.lastChangedFiles = touched;
-        this.forcedInvalidations = forcedInvalidations;
+        // Accumulate (union), not replace — see class javadoc, "Accumulate-until-consumed diffs": a
+        // change observed here must survive until consumeChangedFiles(), even across an intervening
+        // failed-compile cycle whose applySourceChanges call(s) found nothing further changed.
+        this.pendingChangedFiles.addAllIterable(touched);
+        this.pendingForcedInvalidations.addAllIterable(forcedInvalidations);
     }
 
     /**
@@ -276,12 +321,16 @@ public final class IncrementalStackGraph
 
     /**
      * Seeds = union, over {@code changedFileIds}, of {@link #previousElements} and each file's current
-     * elements (covers deletes, adds, and edits), plus this cycle's {@code forcedInvalidations} (referring
-     * elements whose cross-file cache entry was re-resolved by the most recent {@link
-     * #applySourceChanges} — see class javadoc, "Cross-file cache-invalidation contract" — included
-     * unconditionally, independent of which files the caller names here, since they are a direct
-     * consequence of that cycle regardless of the query); answer = every element that transitively
-     * depends on a seed, per the current {@link InvertedIndex}.
+     * elements (covers deletes, adds, and edits), plus {@link #pendingForcedInvalidations} accumulated by
+     * every {@link #applySourceChanges} call since the last {@link #consumeChangedFiles} (referring
+     * elements whose cross-file cache entry was re-resolved — see class javadoc, "Cross-file
+     * cache-invalidation contract" — included unconditionally, independent of which files the caller
+     * names here, since they are a direct consequence of those cycles regardless of the query); answer =
+     * every element that transitively depends on a seed, per the current {@link InvertedIndex}.
+     *
+     * <p>Reads {@link #pendingForcedInvalidations} but does not clear it — call {@link
+     * #consumeChangedFiles} afterward (see class javadoc, "Accumulate-until-consumed diffs") once this
+     * cycle's answer has been used.</p>
      */
     public MutableSet<CoreInstance> computeInvalidation(SetIterable<String> changedFileIds)
     {
@@ -291,18 +340,41 @@ public final class IncrementalStackGraph
             seeds.addAllIterable(previousElements(fileId));
             seeds.addAllIterable(this.elementsByFile.getIfAbsentValue(fileId, Sets.mutable.empty()));
         });
-        seeds.addAllIterable(this.forcedInvalidations);
+        seeds.addAllIterable(this.pendingForcedInvalidations);
         return ReverseQuery.dependentsOf(this.index, seeds);
     }
 
     /**
-     * The file ids found added, changed, or removed by the most recent {@link #applySourceChanges} (or
-     * {@link #buildFull}) call — this shadow's own diff, per the controller ruling that invalidation
-     * seeds for downstream callers (Task 8) must come from here, never from an externally supplied set.
+     * The file ids found added, changed, or removed by every {@link #applySourceChanges} call since the
+     * last {@link #consumeChangedFiles} (accumulated, per class javadoc "Accumulate-until-consumed
+     * diffs") — this shadow's own diff, per the controller ruling that invalidation seeds for downstream
+     * callers (Task 8) must come from here, never from an externally supplied set. A non-consuming read:
+     * does not clear {@link #pendingChangedFiles} — call {@link #consumeChangedFiles} once this cycle's
+     * files (and, via {@link #computeInvalidation}, {@link #pendingForcedInvalidations}) have been used.
      */
     public MutableSet<String> getLastChangedFiles()
     {
-        return Sets.mutable.withAll(this.lastChangedFiles);
+        return Sets.mutable.withAll(this.pendingChangedFiles);
+    }
+
+    /**
+     * Returns the file ids accumulated since the last {@link #consumeChangedFiles} call (identical to
+     * what {@link #getLastChangedFiles} would return right now), then clears <em>both</em> {@link
+     * #pendingChangedFiles} and {@link #pendingForcedInvalidations} together — they are always consumed
+     * as one atomic unit, since a cycle's {@link #computeInvalidation} call folds in whichever {@link
+     * #pendingForcedInvalidations} were live at the time. Callers must call {@link #computeInvalidation}
+     * (which reads, but does not clear, {@link #pendingForcedInvalidations}) <em>before</em> calling this
+     * method, or the forced invalidations it depends on will already have been cleared.
+     *
+     * @return the changed file ids accumulated since the last consume (a snapshot, unaffected by the
+     *         clear this call performs)
+     */
+    public SetIterable<String> consumeChangedFiles()
+    {
+        SetIterable<String> result = this.pendingChangedFiles.toImmutable();
+        this.pendingChangedFiles.clear();
+        this.pendingForcedInvalidations.clear();
+        return result;
     }
 
     /**
