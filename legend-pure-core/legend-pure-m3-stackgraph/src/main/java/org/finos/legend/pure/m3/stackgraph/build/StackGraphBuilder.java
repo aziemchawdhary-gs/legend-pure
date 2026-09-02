@@ -85,7 +85,7 @@ public final class StackGraphBuilder
         sourceRegistry.getSources().forEach(this::buildDefinitions);
         sourceRegistry.getSources().forEach(this::buildSpanIndex);
         collectAndBuildReferences();
-        return new BuiltGraph(this.graph, this.referenceNodes, this.skipped, this.referenceOwners, this.nodeOwners, this.spanIndexByFile, new TestAccess());
+        return new BuiltGraph(this.graph, this.referenceNodes, this.skipped, this.referenceOwners, this.nodeOwners, this.spanIndexByFile, this.processorSupport, new TestAccess());
     }
 
     // Task 4: one ElementSpanIndex per source, built before reference collection so every

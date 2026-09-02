@@ -18,6 +18,7 @@ import org.eclipse.collections.api.RichIterable;
 import org.eclipse.collections.api.factory.Lists;
 import org.eclipse.collections.api.map.MutableMap;
 import org.eclipse.collections.api.tuple.Pair;
+import org.finos.legend.pure.m3.navigation.ProcessorSupport;
 import org.finos.legend.pure.m3.stackgraph.graph.Node;
 import org.finos.legend.pure.m3.stackgraph.graph.StackGraph;
 import org.finos.legend.pure.m3.stackgraph.invalidation.ElementSpanIndex;
@@ -34,11 +35,12 @@ public final class BuiltGraph
     private final MutableMap<CoreInstance, CoreInstance> referenceOwners; // stub -> owning element, nullable
     private final MutableMap<Node, CoreInstance> nodeOwners; // reference node -> owning element, nullable
     private final MutableMap<String, ElementSpanIndex> spanIndexByFile;
+    private final ProcessorSupport processorSupport;
     private final Object testAccess;
 
     BuiltGraph(StackGraph graph, MutableMap<CoreInstance, Node> referenceNodes, MutableMap<CoreInstance, String> skipped,
                MutableMap<CoreInstance, CoreInstance> referenceOwners, MutableMap<Node, CoreInstance> nodeOwners,
-               MutableMap<String, ElementSpanIndex> spanIndexByFile, Object testAccess)
+               MutableMap<String, ElementSpanIndex> spanIndexByFile, ProcessorSupport processorSupport, Object testAccess)
     {
         this.graph = graph;
         this.referenceNodes = referenceNodes;
@@ -46,6 +48,7 @@ public final class BuiltGraph
         this.referenceOwners = referenceOwners;
         this.nodeOwners = nodeOwners;
         this.spanIndexByFile = spanIndexByFile;
+        this.processorSupport = processorSupport;
         this.testAccess = testAccess;
     }
 
@@ -100,6 +103,28 @@ public final class BuiltGraph
     {
         ElementSpanIndex index = this.spanIndexByFile.get(fileId);
         return (index == null) ? Lists.immutable.empty() : index.getElements();
+    }
+
+    /**
+     * The raw {@link ElementSpanIndex} for the given file, for callers (e.g. {@code ResolutionCache})
+     * that need to map an arbitrary {@link org.finos.legend.pure.m4.coreinstance.SourceInformation}
+     * back to its owning top-level element rather than just enumerate the file's elements.
+     *
+     * @param fileId source id
+     * @return the file's span index, or null if the file is unknown
+     */
+    public ElementSpanIndex getSpanIndex(String fileId)
+    {
+        return this.spanIndexByFile.get(fileId);
+    }
+
+    /**
+     * Read-only access to the {@link ProcessorSupport} the graph was built with, for callers that need
+     * to classify an arbitrary target instance (e.g. {@code _Package.isPackage}).
+     */
+    public ProcessorSupport getProcessorSupport()
+    {
+        return this.processorSupport;
     }
 
     public Object getTestAccess()

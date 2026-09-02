@@ -23,6 +23,7 @@ import org.finos.legend.pure.m3.stackgraph.build.BuiltGraph;
 import org.finos.legend.pure.m3.stackgraph.build.StackGraphBuilder;
 import org.finos.legend.pure.m3.stackgraph.graph.Node;
 import org.finos.legend.pure.m3.stackgraph.graph.NodeTag;
+import org.finos.legend.pure.m3.stackgraph.invalidation.ReferenceKinds;
 import org.finos.legend.pure.m3.stackgraph.policy.PureResolutionPolicy;
 import org.finos.legend.pure.m3.stackgraph.policy.Resolution;
 import org.finos.legend.pure.m3.stackgraph.search.PathSearch;
@@ -129,7 +130,7 @@ public class TestStackGraphResolutionParity extends AbstractPureTestWithCoreComp
         long start = System.nanoTime();
         SearchResult result = search.resolve(ref);
         queryNanos.add(System.nanoTime() - start);
-        boolean qualified = isQualifiedReference(stub, kind);
+        boolean qualified = ReferenceKinds.isQualified(stub);
         Resolution resolution = policy.resolve(result, qualified);
         if (resolution.hitDepthCap())
         {
@@ -206,28 +207,6 @@ public class TestStackGraphResolutionParity extends AbstractPureTestWithCoreComp
                 throw new IllegalArgumentException("Unknown stub kind: " + kind);
             }
         }
-    }
-
-    /**
-     * Qualification per stub kind: for {@code ImportStub}, from the stub's own {@code idOrPath}; for
-     * {@code EnumStub}, from its {@code enumeration} ImportStub's {@code idOrPath} (an EnumStub has no
-     * {@code idOrPath} of its own); for {@code PropertyStub}, always qualified=true — per carry-forward
-     * 3/4, its push chain starts directly at the owner class's member scope (the owner is a resolved
-     * Class, not a name+import lookup), so the import/fallback partition in
-     * {@link PureResolutionPolicy#resolve} does not apply.
-     */
-    private boolean isQualifiedReference(CoreInstance stub, String kind)
-    {
-        if ("PropertyStub".equals(kind))
-        {
-            return true;
-        }
-        CoreInstance importStubForIdOrPath = "EnumStub".equals(kind)
-                ? stub.getValueForMetaPropertyToOne(M3Properties.enumeration)
-                : stub;
-        CoreInstance idOrPath = (importStubForIdOrPath == null) ? null
-                : importStubForIdOrPath.getValueForMetaPropertyToOne(M3Properties.idOrPath);
-        return (idOrPath != null) && (idOrPath.getName().indexOf(':') != -1);
     }
 
     private boolean isMilestoningWeakMatch(Resolution resolution, CoreInstance expected)
