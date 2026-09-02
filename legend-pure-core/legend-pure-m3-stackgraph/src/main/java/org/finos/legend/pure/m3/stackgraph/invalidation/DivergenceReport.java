@@ -100,6 +100,16 @@ public final class DivergenceReport
     }
 
     /**
+     * @return whether this report is in assert mode ({@link #recordCycle} throws on unexplained
+     *         {@code SHADOW_MISSING}); consulted by callers (e.g. {@code StackGraphInvalidationShadow})
+     *         that must themselves decide whether to propagate or swallow their own internal failures.
+     */
+    public boolean isAssertMode()
+    {
+        return this.assertMode;
+    }
+
+    /**
      * Record one compile cycle's divergence between the legacy answer and the shadow answer for the
      * same query, folding the result into this report's cumulative totals.
      *

@@ -38,6 +38,10 @@
             <groupId>org.eclipse.collections</groupId>
             <artifactId>eclipse-collections-api</artifactId>
         </dependency>
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-api</artifactId>
+        </dependency>
         <!-- Required transitively at compile time regardless of direct use: GraphNodeIterable
              (legend-pure-m4) extends org.eclipse.collections.impl.lazy.AbstractLazySpliterable, so
              javac needs the impl jar on the compile classpath to resolve that supertype. It is also
