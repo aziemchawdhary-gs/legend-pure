@@ -65,12 +65,19 @@ import java.util.SortedMap;
  *
  * <h2>Failure isolation</h2>
  * <p>A bug in this shadow must never break a real compile. In log mode ({@link DivergenceReport#isAssertMode()}
- * false) any {@link RuntimeException} raised while building or comparing this cycle's answers is caught,
- * logged, counted in {@link #getShadowErrorCount()}, and the cycle is otherwise treated as a no-op (this
+ * false), {@link #invalidate} and {@link #compiled} catch <em>every</em> {@link Throwable} raised while
+ * building or comparing this cycle's answers — not just {@link RuntimeException} — since a defensive
+ * {@code assert} elsewhere in this module (e.g. {@code PathSearch}'s root-index invariant check, reached
+ * transitively via {@link #ensureBuilt}/{@link IncrementalStackGraph#buildFull}) throws {@link
+ * AssertionError}, an {@link Error}, not a {@link RuntimeException} — under {@code -ea} (Surefire's
+ * default) that must be swallowed in log mode exactly like any other shadow bug. Caught Throwables are
+ * logged and counted in {@link #getShadowErrorCount()}; the cycle is otherwise treated as a no-op (this
  * cycle's accumulators are still cleared so a shadow bug in one cycle cannot corrupt the next). In assert
- * mode the exception — like {@link DivergenceReport#recordCycle}'s own {@link AssertionError} for an
- * unexplained divergence — propagates, since assert mode exists specifically to surface shadow problems
- * loudly during development/CI.</p>
+ * mode every Throwable — including {@link DivergenceReport#recordCycle}'s own {@link AssertionError} for
+ * an unexplained divergence — propagates via precise rethrow (JLS 11.2.3): nothing this shadow calls
+ * declares a checked exception, so only unchecked {@link RuntimeException}/{@link Error} can ever reach
+ * the catch, letting {@code throw} escape without a {@code throws} clause. Assert mode exists specifically
+ * to surface shadow problems loudly during development/CI.</p>
  */
 public final class StackGraphInvalidationShadow implements CompilerEventHandler
 {
@@ -119,9 +126,20 @@ public final class StackGraphInvalidationShadow implements CompilerEventHandler
         {
             rebuild();
         }
-        catch (RuntimeException e)
+        catch (Throwable t)
         {
-            handleShadowFailure(e);
+            // Precise rethrow (JLS 11.2.3): rebuild() calls nothing that declares a checked exception, so
+            // only an unchecked RuntimeException/Error (e.g. PathSearch's defensive `assert` under -ea)
+            // can ever reach this catch — javac allows `throw t;` here, from this exact catch clause,
+            // without a `throws` clause on this method. This inline shape (rather than delegating to a
+            // shared helper that itself does `throw t;`) is required: precise rethrow only applies within
+            // the original catch clause of the try that produced the exception, not across a method
+            // boundary — see the class javadoc's "Failure isolation" section.
+            if (this.report.isAssertMode())
+            {
+                throw t;
+            }
+            logShadowFailure(t);
         }
     }
 
@@ -133,9 +151,14 @@ public final class StackGraphInvalidationShadow implements CompilerEventHandler
             ensureBuilt();
             consolidatedCoreInstances.forEach(instance -> this.oldAnswerPaths.add(pathFor(instance)));
         }
-        catch (RuntimeException e)
+        catch (Throwable t)
         {
-            handleShadowFailure(e);
+            // See finishedCompilingCore's catch for why this rethrow must stay inline.
+            if (this.report.isAssertMode())
+            {
+                throw t;
+            }
+            logShadowFailure(t);
         }
     }
 
@@ -152,16 +175,18 @@ public final class StackGraphInvalidationShadow implements CompilerEventHandler
             MutableSet<String> shadowAnswerPaths = shadowInvalidated.collect(this::pathFor, Sets.mutable.empty());
             this.report.recordCycle(this.oldAnswerPaths, shadowAnswerPaths, this::classifierLookup);
         }
-        catch (AssertionError e)
+        catch (Throwable t)
         {
-            // DivergenceReport.recordCycle's own assert-mode signal for an unexplained divergence: it has
-            // already folded this cycle's results into the report before throwing (see its javadoc), so
-            // simply propagate.
-            throw e;
-        }
-        catch (RuntimeException e)
-        {
-            handleShadowFailure(e);
+            // Covers DivergenceReport.recordCycle's own assert-mode AssertionError for an unexplained
+            // divergence (it has already folded this cycle's results into the report before throwing —
+            // see its javadoc) exactly the same way as any other shadow-internal failure: rethrown in
+            // assert mode, swallowed-and-counted in log mode. See finishedCompilingCore's catch for why
+            // this rethrow must stay inline rather than delegate to a shared helper.
+            if (this.report.isAssertMode())
+            {
+                throw t;
+            }
+            logShadowFailure(t);
         }
         finally
         {
@@ -184,9 +209,10 @@ public final class StackGraphInvalidationShadow implements CompilerEventHandler
     }
 
     /**
-     * Cumulative count of {@link RuntimeException}s caught from this shadow's own logic in log mode
-     * (never incremented in assert mode, where such exceptions propagate instead). Exposed for tests and
-     * operational visibility — a bug in the shadow never breaks a compile, but should not go unnoticed.
+     * Cumulative count of {@link Throwable}s (including {@link Error}s such as a defensive {@code assert}
+     * failure) caught from this shadow's own logic in log mode (never incremented in assert mode, where
+     * such Throwables propagate instead). Exposed for tests and operational visibility — a bug in the
+     * shadow never breaks a compile, but should not go unnoticed.
      */
     public long getShadowErrorCount()
     {
@@ -208,14 +234,21 @@ public final class StackGraphInvalidationShadow implements CompilerEventHandler
         this.built = true;
     }
 
-    private void handleShadowFailure(RuntimeException e)
+    /**
+     * Log-mode-only half of shadow failure handling: counts {@code t} and logs it, then returns normally
+     * so the caller's cycle is treated as a no-op rather than breaking a real compile. The assert-mode
+     * rethrow is deliberately <em>not</em> done here — each call site does its own {@code if
+     * (assertMode) { throw t; }} inline, immediately in its own {@code catch (Throwable t)} clause, because
+     * precise rethrow (JLS 11.2.3) only applies within the original catch clause of the try that produced
+     * the exception, not across a method boundary: a shared helper taking {@code Throwable} as a parameter
+     * and doing {@code throw t;} does not compile without declaring {@code throws Throwable} on this
+     * (interface-constrained, {@code throws}-free) method — see the class javadoc's "Failure isolation"
+     * section and each call site's comment.
+     */
+    private void logShadowFailure(Throwable t)
     {
-        if (this.report.isAssertMode())
-        {
-            throw e;
-        }
         this.shadowErrorCount++;
-        LOGGER.warn("Stack-graph invalidation shadow failed this cycle (non-fatal, shadow-error): {}", e.toString(), e);
+        LOGGER.warn("Stack-graph invalidation shadow failed this cycle (non-fatal, shadow-error): {}", t.toString(), t);
     }
 
     /**
