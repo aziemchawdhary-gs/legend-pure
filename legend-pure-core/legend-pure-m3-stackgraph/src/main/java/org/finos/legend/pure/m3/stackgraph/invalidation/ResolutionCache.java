@@ -126,6 +126,13 @@ public final class ResolutionCache
      * list because the caller must know which stub produced each {@link Entry} in order to replace it
      * in its own per-stub cache.
      *
+     * <p><b>Maintenance note:</b> this method intentionally duplicates {@link #compute(BuiltGraph)}'s
+     * per-stub resolution logic (depth-cap / MATCHED / NOT_FOUND / AMBIGUOUS dispatch and {@code
+     * resolveTargetElement}) rather than sharing a common private helper, to keep the existing, tested
+     * {@code compute(BuiltGraph)} untouched by this addition. Any future change to how a stub resolves to
+     * an {@link Entry} in {@code compute(BuiltGraph)} must be mirrored here, or the two methods will
+     * silently diverge on outcomes computed against the same {@link BuiltGraph}.</p>
+     *
      * @param built built stack graph to resolve against
      * @param stubs stubs to (re)resolve
      * @return one entry per stub in {@code stubs} that has a known owning element; stubs with no known

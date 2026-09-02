@@ -70,7 +70,46 @@ import org.finos.legend.pure.m4.coreinstance.SourceInformation;
  * not a {@code PathSearch}), lets a change to file X find every cached entry whose <em>target</em>
  * element previously lived in X — wherever the <em>referring</em> stub itself lives — and re-resolve
  * just those, independent of whether X's own referrers happen to already be swept in by the
- * referring-element file-touch check.</p>
+ * referring-element file-touch check. Because that re-resolution happens <em>during</em> {@link
+ * #applySourceChanges} — i.e. strictly before any caller can call {@link #computeInvalidation} for this
+ * cycle — a referring element whose cross-file entry flips from MATCHED to unresolved (its target was
+ * removed, not merely edited) would otherwise vanish from the answer: the freshly rebuilt {@link
+ * InvertedIndex} no longer has an edge from the old target to it (the entry is no longer MATCHED, so it
+ * is never posted), and neither {@link #previousElements} nor the touched file's current elements name
+ * that referrer (only its <em>target's</em> file was touched, not its own). Every stub identified via
+ * this side map has, by definition, had its resolution potentially changed this cycle, so each such
+ * stub's referring element is captured into a per-cycle {@code forcedInvalidations} set (replaced, not
+ * accumulated, on every {@link #applySourceChanges} call — including a no-op one) and unioned into every
+ * {@link #computeInvalidation} answer until the next call, closed transitively over the fresh index like
+ * any other seed.</p>
+ *
+ * <h2>Identity-stability assumption</h2>
+ * <p>Carrying forward cache entries for untouched files (rather than re-resolving the whole program) and
+ * the cross-file re-resolution above both rely on one invariant of the host {@code PureRuntime}'s
+ * incremental compiler: when file X changes, only X's own top-level {@link CoreInstance} objects get
+ * reparsed into <em>new</em> Java objects — an unrelated, textually-unchanged file Y that merely
+ * <em>refers to</em> something in X keeps its own top-level elements' and stubs' identity across the
+ * recompile (only their resolution is re-validated, not their object identity). This is what lets a
+ * stub captured in {@code targetFileToStubs} from a <em>previous</em> cycle still be found — by the same
+ * {@link CoreInstance} key — in the freshly rebuilt graph's {@link BuiltGraph#getReferenceNode}. Verified
+ * empirically by {@code TestIncrementalStackGraph}'s transitive cross-file test (a dependent two hops
+ * away from the edited file is only reachable if the intermediate file's untouched stub object was
+ * successfully re-resolved by identity). If that compiler invariant is ever relaxed — e.g. a future
+ * change starts reparsing transitively-affected downstream sources wholesale, not just re-binding their
+ * references — {@link #entriesByStub}'s keys and the {@link CoreInstance} identities stored in {@link
+ * #elementsByFile}/{@link #priorElementsByFile} would go stale for those files without the
+ * content-fingerprint diff (decision rule 2) ever flagging them as changed, silently reintroducing the
+ * escape this class otherwise closes.</p>
+ *
+ * <h2>Known gap — NOT_FOUND is not reconsidered on later supply (Task 8 awareness)</h2>
+ * <p>A cross-file-affected stub that re-resolves to "unresolved" (its target file was removed, or the
+ * target name is otherwise gone) is, by construction, never posted to {@link #targetFileToStubs} (only
+ * MATCHED entries are). If a <em>later</em> cycle re-adds a file that would newly satisfy that stub, this
+ * class has no record linking the stub back to that file/name, so it is never picked up for
+ * re-resolution — the entry stays "unresolved" until its own owning file happens to be touched again for
+ * an unrelated reason. This mirrors the same asymmetry {@link ResolutionCache} already has for
+ * "unresolved"/"ambiguous" entries (no target to index under); Task 8 should be aware that a
+ * currently-broken reference is not automatically healed by an unrelated file addition.</p>
  */
 public final class IncrementalStackGraph
 {
@@ -85,6 +124,10 @@ public final class IncrementalStackGraph
     private final MutableMap<String, MutableSet<CoreInstance>> targetFileToStubs = Maps.mutable.empty();
     private InvertedIndex index = InvertedIndex.from(Lists.immutable.<ResolutionCache.Entry>empty());
     private MutableSet<String> lastChangedFiles = Sets.mutable.empty();
+    // Referring elements whose cross-file cache entry was re-resolved THIS cycle (see class javadoc,
+    // "Cross-file cache-invalidation contract"). Replaced (not accumulated) on every applySourceChanges
+    // call, including a no-op one, and unioned into every computeInvalidation answer until the next call.
+    private MutableSet<CoreInstance> forcedInvalidations = Sets.mutable.empty();
 
     private IncrementalStackGraph(ModelRepository repository, ProcessorSupport processorSupport)
     {
@@ -133,6 +176,7 @@ public final class IncrementalStackGraph
         if (touched.isEmpty())
         {
             this.lastChangedFiles = Sets.mutable.empty();
+            this.forcedInvalidations = Sets.mutable.empty();
             return;
         }
 
@@ -160,6 +204,12 @@ public final class IncrementalStackGraph
                 stubsToCompute.add(stub);
             }
         });
+        // Every stub found here has, by definition, had its resolution potentially changed this cycle
+        // (its cached target lived in a touched file) — its referring element is a forced invalidation
+        // regardless of whether the stub's *new* resolution still keeps it reachable from this cycle's
+        // file-based seeds (see class javadoc, "Cross-file cache-invalidation contract": a target that
+        // was removed, not merely edited, leaves no surviving index edge to walk from).
+        MutableSet<CoreInstance> forcedInvalidations = Sets.mutable.empty();
         touched.forEach(fileId ->
         {
             MutableSet<CoreInstance> affected = this.targetFileToStubs.get(fileId);
@@ -167,6 +217,11 @@ public final class IncrementalStackGraph
             {
                 affected.forEach(stub ->
                 {
+                    ResolutionCache.Entry staleEntry = this.entriesByStub.get(stub);
+                    if (staleEntry != null)
+                    {
+                        forcedInvalidations.add(staleEntry.getReferringElement());
+                    }
                     if (newBuilt.getReferenceNode(stub) != null)
                     {
                         stubsToCompute.add(stub);
@@ -206,6 +261,7 @@ public final class IncrementalStackGraph
 
         this.built = newBuilt;
         this.lastChangedFiles = touched;
+        this.forcedInvalidations = forcedInvalidations;
     }
 
     /**
@@ -220,8 +276,12 @@ public final class IncrementalStackGraph
 
     /**
      * Seeds = union, over {@code changedFileIds}, of {@link #previousElements} and each file's current
-     * elements (covers deletes, adds, and edits); answer = every element that transitively depends on a
-     * seed, per the current {@link InvertedIndex}.
+     * elements (covers deletes, adds, and edits), plus this cycle's {@code forcedInvalidations} (referring
+     * elements whose cross-file cache entry was re-resolved by the most recent {@link
+     * #applySourceChanges} — see class javadoc, "Cross-file cache-invalidation contract" — included
+     * unconditionally, independent of which files the caller names here, since they are a direct
+     * consequence of that cycle regardless of the query); answer = every element that transitively
+     * depends on a seed, per the current {@link InvertedIndex}.
      */
     public MutableSet<CoreInstance> computeInvalidation(SetIterable<String> changedFileIds)
     {
@@ -231,6 +291,7 @@ public final class IncrementalStackGraph
             seeds.addAllIterable(previousElements(fileId));
             seeds.addAllIterable(this.elementsByFile.getIfAbsentValue(fileId, Sets.mutable.empty()));
         });
+        seeds.addAllIterable(this.forcedInvalidations);
         return ReverseQuery.dependentsOf(this.index, seeds);
     }
 

@@ -14,9 +14,12 @@
 
 package org.finos.legend.pure.m3.stackgraph.invalidation;
 
+import org.eclipse.collections.api.RichIterable;
 import org.eclipse.collections.api.factory.Sets;
 import org.eclipse.collections.api.set.MutableSet;
 import org.finos.legend.pure.m3.navigation.PackageableElement.PackageableElement;
+import org.finos.legend.pure.m3.serialization.runtime.Source;
+import org.finos.legend.pure.m3.serialization.runtime.SourceRegistry;
 import org.finos.legend.pure.m3.tests.AbstractPureTestWithCoreCompiled;
 import org.finos.legend.pure.m4.coreinstance.CoreInstance;
 import org.junit.After;
@@ -54,7 +57,8 @@ public class TestIncrementalStackGraph extends AbstractPureTestWithCoreCompiled
     @After
     public void cleanRuntime()
     {
-        for (String id : new String[] {"a.pure", "b.pure", "delpure.pure", "ccfi_t.pure", "ccfi_m.pure", "ccfi_l.pure"})
+        for (String id : new String[] {"a.pure", "b.pure", "delpure.pure", "ccfi_t.pure", "ccfi_m.pure", "ccfi_l.pure",
+                "rmtgt_t.pure", "rmtgt_m.pure"})
         {
             if (runtime.getSourceById(id) != null)
             {
@@ -145,5 +149,51 @@ public class TestIncrementalStackGraph extends AbstractPureTestWithCoreCompiled
                 paths.contains("spikepkg::inc::StackGraphSpikeIncCcfiM"));
         Assert.assertTrue("transitive dependent must be invalidated via M's freshly re-resolved cache entry",
                 paths.contains("spikepkg::inc::StackGraphSpikeIncCcfiL"));
+    }
+
+    @Test
+    public void testRemovedTargetInvalidatesUntouchedDependentViaForcedInvalidation()
+    {
+        // Regression for a review finding: a cross-file entry whose target is REMOVED (not merely
+        // edited) flips MATCHED -> unresolved during applySourceChanges itself, so by the time
+        // computeInvalidation runs, the freshly rebuilt InvertedIndex no longer has an edge from the old
+        // target to the referrer (the entry is no longer MATCHED, so it is never posted), and the
+        // referrer's own (untouched) file names neither the old target nor a replacement as one of its
+        // elements. Without a forced-invalidation record for this cycle, M would silently escape
+        // computeInvalidation even though its resolution outcome genuinely changed.
+        //
+        // Driving IncrementalStackGraph directly against a SourceRegistry view that omits T's source
+        // (rather than deleting T from the live runtime, which M's still-referencing text would make
+        // uncompilable) simulates "T's file removed" purely for this shadow's own bookkeeping: T's
+        // CoreInstance stays fully live and compiled in the real runtime; only the view used to rebuild
+        // this shadow hides T's source, so its class definition is never (re)registered.
+        compileTestSource("rmtgt_t.pure", "Class spikepkg::inc::StackGraphSpikeIncRmT {}\n");
+        compileTestSource("rmtgt_m.pure",
+                "Class spikepkg::inc::StackGraphSpikeIncRmM\n{\n   p : spikepkg::inc::StackGraphSpikeIncRmT[1];\n}\n");
+        baseline.applySourceChanges(runtime.getSourceRegistry());
+
+        CoreInstance mElement = processorSupport.package_getByUserPath("spikepkg::inc::StackGraphSpikeIncRmM");
+        Assert.assertNotNull(mElement);
+
+        SourceRegistry live = runtime.getSourceRegistry();
+        SourceRegistry withoutT = new SourceRegistry(live.getCodeStorage(), null)
+        {
+            @Override
+            public RichIterable<Source> getSources()
+            {
+                return live.getSources().reject(source -> "rmtgt_t.pure".equals(source.getId()));
+            }
+        };
+        baseline.applySourceChanges(withoutT);
+
+        Assert.assertEquals(Sets.mutable.with("rmtgt_t.pure"), baseline.getLastChangedFiles());
+
+        MutableSet<CoreInstance> invalidated = baseline.computeInvalidation(Sets.mutable.with("rmtgt_t.pure"));
+        Assert.assertTrue("dependent of a removed target must be invalidated even though its own file is untouched",
+                invalidated.contains(mElement));
+
+        // No manual restore needed: @After deletes both real files and resyncs baseline via
+        // applySourceChanges(runtime.getSourceRegistry()) — dropping rmtgt_m.pure's (now-unresolved)
+        // entry cleanly regardless of its status, and rmtgt_t.pure is already untracked by baseline.
     }
 }
