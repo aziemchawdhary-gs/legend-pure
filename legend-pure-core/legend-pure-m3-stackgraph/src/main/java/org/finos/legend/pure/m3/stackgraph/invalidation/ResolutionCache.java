@@ -16,7 +16,9 @@ package org.finos.legend.pure.m3.stackgraph.invalidation;
 
 import org.eclipse.collections.api.RichIterable;
 import org.eclipse.collections.api.factory.Lists;
+import org.eclipse.collections.api.factory.Maps;
 import org.eclipse.collections.api.list.MutableList;
+import org.eclipse.collections.api.map.MutableMap;
 import org.eclipse.collections.api.map.primitive.MutableObjectIntMap;
 import org.eclipse.collections.impl.factory.primitive.ObjectIntMaps;
 import org.finos.legend.pure.m3.navigation.M3Properties;
@@ -112,6 +114,76 @@ public final class ResolutionCache
             }
         }
         return new ResolutionCache(entries, skipCounts);
+    }
+
+    /**
+     * Recomputes resolution entries for a restricted set of stubs (each with a known owning element),
+     * without touching the rest of the program. Used by {@code IncrementalStackGraph} to keep cache
+     * maintenance proportional to the stubs actually affected by an edit, rather than re-resolving
+     * every stub in the program on every incremental cycle (see {@link #compute(BuiltGraph)} for the
+     * unrestricted computation this mirrors — kept as a separate method rather than a refactor of it,
+     * so the existing, tested full computation is untouched). Returns a stub-keyed map rather than a
+     * list because the caller must know which stub produced each {@link Entry} in order to replace it
+     * in its own per-stub cache.
+     *
+     * @param built built stack graph to resolve against
+     * @param stubs stubs to (re)resolve
+     * @return one entry per stub in {@code stubs} that has a known owning element; stubs with no known
+     *         owner (the "null-owner" case in {@link #compute(BuiltGraph)}) are omitted, exactly as
+     *         they are never added to {@link #getEntries()}
+     */
+    public static MutableMap<CoreInstance, Entry> computeRestricted(BuiltGraph built, RichIterable<CoreInstance> stubs)
+    {
+        MutableMap<CoreInstance, Entry> result = Maps.mutable.empty();
+        PathSearch search = new PathSearch(built.getGraph());
+        PureResolutionPolicy policy = new PureResolutionPolicy();
+
+        for (CoreInstance stub : stubs)
+        {
+            CoreInstance referringElement = built.getOwningElement(stub);
+            if (referringElement == null)
+            {
+                continue;
+            }
+            Node ref = built.getReferenceNode(stub);
+            boolean qualified = ReferenceKinds.isQualified(stub);
+            SearchResult searchResult = search.resolve(ref);
+            Resolution resolution = policy.resolve(searchResult, qualified);
+
+            Entry entry;
+            if (resolution.hitDepthCap())
+            {
+                entry = Entry.unresolved(referringElement, "depth-cap");
+            }
+            else
+            {
+                switch (resolution.getOutcome())
+                {
+                    case MATCHED:
+                    {
+                        TargetInfo target = resolveTargetElement(built, resolution.getTarget());
+                        entry = Entry.matched(referringElement, target.element, target.fileId);
+                        break;
+                    }
+                    case NOT_FOUND:
+                    {
+                        entry = Entry.unresolved(referringElement, "unresolved");
+                        break;
+                    }
+                    case AMBIGUOUS:
+                    {
+                        entry = Entry.unresolved(referringElement, "ambiguous");
+                        break;
+                    }
+                    default:
+                    {
+                        throw new IllegalStateException("Unknown outcome: " + resolution.getOutcome());
+                    }
+                }
+            }
+            result.put(stub, entry);
+        }
+        return result;
     }
 
     public RichIterable<Entry> getEntries()

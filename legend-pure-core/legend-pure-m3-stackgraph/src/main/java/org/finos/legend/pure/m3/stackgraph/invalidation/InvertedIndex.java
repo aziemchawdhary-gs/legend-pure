@@ -14,6 +14,7 @@
 
 package org.finos.legend.pure.m3.stackgraph.invalidation;
 
+import org.eclipse.collections.api.RichIterable;
 import org.eclipse.collections.api.factory.Maps;
 import org.eclipse.collections.api.factory.Sets;
 import org.eclipse.collections.api.map.MutableMap;
@@ -38,8 +39,23 @@ public final class InvertedIndex
 
     public static InvertedIndex from(ResolutionCache cache)
     {
+        return from(cache.getEntries());
+    }
+
+    /**
+     * As {@link #from(ResolutionCache)}, but over an arbitrary entry collection rather than a full
+     * {@link ResolutionCache} — lets {@code IncrementalStackGraph} rebuild the index from its own
+     * incrementally-maintained, per-stub entry map without needing a {@link ResolutionCache} instance
+     * (whose entry list has no public constructor of its own).
+     *
+     * @param entries MATCHED-or-not resolution entries; only MATCHED entries with a non-null target
+     *                are posted, exactly as in {@link #from(ResolutionCache)}
+     * @return the inverted index built from {@code entries}
+     */
+    public static InvertedIndex from(RichIterable<ResolutionCache.Entry> entries)
+    {
         MutableMap<CoreInstance, MutableSet<CoreInstance>> referrersByTarget = Maps.mutable.empty();
-        cache.getEntries().forEach(entry ->
+        entries.forEach(entry ->
         {
             if (entry.isMatched() && (entry.getTargetElement() != null))
             {
