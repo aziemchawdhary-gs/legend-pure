@@ -94,4 +94,48 @@
             </plugin>
         </plugins>
     </build>
+
+    <profiles>
+        <!-- Task 9: shadow corpus harness. Opt-in (never runs as part of a normal `mvn test`): re-runs
+             m3-core's ~29 org.finos.legend.pure.m3.tests.incremental.** JUnit classes (pulled in via the
+             legend-pure-m3-core test-jar already declared above) with ShadowAttachingRunListener wired in,
+             which attaches an assert-mode StackGraphInvalidationShadow to each test class's PureRuntime as
+             it runs. Each shadow's constructor does an eager full second-graph build (~45s), so this
+             execution is slow (tens of minutes) by design — see the Task 9 report for measured wall-clock
+             and memory. -->
+        <profile>
+            <id>shadow-corpus</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-surefire-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <id>shadow-incremental-corpus</id>
+                                <phase>test</phase>
+                                <goals>
+                                    <goal>test</goal>
+                                </goals>
+                                <configuration>
+                                    <dependenciesToScan>
+                                        <dependency>org.finos.legend.pure:legend-pure-m3-core</dependency>
+                                    </dependenciesToScan>
+                                    <includes>
+                                        <include>**/incremental/**/Test*.java</include>
+                                    </includes>
+                                    <properties>
+                                        <property>
+                                            <name>listener</name>
+                                            <value>org.finos.legend.pure.m3.stackgraph.invalidation.ShadowAttachingRunListener</value>
+                                        </property>
+                                    </properties>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
 </project>
