@@ -33,8 +33,10 @@ import org.finos.legend.pure.m3.stackgraph.graph.FileSubgraph;
 import org.finos.legend.pure.m3.stackgraph.graph.Node;
 import org.finos.legend.pure.m3.stackgraph.graph.NodeTag;
 import org.finos.legend.pure.m3.stackgraph.graph.StackGraph;
+import org.finos.legend.pure.m3.stackgraph.invalidation.ElementSpanIndex;
 import org.finos.legend.pure.m4.ModelRepository;
 import org.finos.legend.pure.m4.coreinstance.CoreInstance;
+import org.finos.legend.pure.m4.coreinstance.SourceInformation;
 import org.finos.legend.pure.m4.tools.GraphNodeIterable;
 
 /**
@@ -67,6 +69,9 @@ public final class StackGraphBuilder
     private final MutableMap<String, Node> popChains = Maps.mutable.empty();        // fileId + " " + path -> pop node
     private final MutableMap<CoreInstance, Node> sectionScopes = Maps.mutable.empty(); // ImportGroup -> scope node (Task 4)
     private final MutableMap<Node, Node> memberPops = Maps.mutable.empty(); // class pop node -> its MEMBER pop (memoized)
+    private final MutableMap<String, ElementSpanIndex> spanIndexByFile = Maps.mutable.empty(); // fileId -> span index (Task 4)
+    private final MutableMap<CoreInstance, CoreInstance> referenceOwners = Maps.mutable.empty(); // stub -> owning element, nullable (Task 4)
+    private final MutableMap<Node, CoreInstance> nodeOwners = Maps.mutable.empty(); // reference node -> owning element, nullable (Task 4)
 
     public StackGraphBuilder(ModelRepository repository, ProcessorSupport processorSupport)
     {
@@ -78,8 +83,16 @@ public final class StackGraphBuilder
     {
         buildSpecialTypes();
         sourceRegistry.getSources().forEach(this::buildDefinitions);
+        sourceRegistry.getSources().forEach(this::buildSpanIndex);
         collectAndBuildReferences();
-        return new BuiltGraph(this.graph, this.referenceNodes, this.skipped, new TestAccess());
+        return new BuiltGraph(this.graph, this.referenceNodes, this.skipped, this.referenceOwners, this.nodeOwners, this.spanIndexByFile, new TestAccess());
+    }
+
+    // Task 4: one ElementSpanIndex per source, built before reference collection so every
+    // buildXxxReference call below can resolve the owning element of the stub it registers.
+    private void buildSpanIndex(Source source)
+    {
+        this.spanIndexByFile.put(source.getId(), ElementSpanIndex.fromSource(source));
     }
 
     private void buildDefinitions(Source source)
@@ -393,6 +406,7 @@ public final class StackGraphBuilder
         if (ref != null)
         {
             this.referenceNodes.put(stub, ref);
+            recordOwner(stub, ref);
         }
         else
         {
@@ -415,6 +429,7 @@ public final class StackGraphBuilder
         if (ref != null)
         {
             this.referenceNodes.put(stub, ref);
+            recordOwner(stub, ref);
         }
         else
         {
@@ -469,6 +484,21 @@ public final class StackGraphBuilder
         MutableList<String> parts = splitPath(ownerPath).with(MEMBER).with(propertyName);
         Node ref = pushChainToTarget(f, parts, f.getRoot());
         this.referenceNodes.put(stub, ref);
+        recordOwner(stub, ref);
+    }
+
+    // Task 4: records, for a just-registered reference node, the top-level element that owns the
+    // stub's declaration site — the element in the stub's own file whose span contains the stub's
+    // SourceInformation. Null-tolerant: EnumStubs always carry a null SourceInformation (there is no
+    // per-value source position), so their owner is recorded as null and callers are expected to
+    // count/skip that case rather than treat it as an error.
+    private void recordOwner(CoreInstance stub, Node ref)
+    {
+        SourceInformation si = stub.getSourceInformation();
+        ElementSpanIndex index = (si == null) ? null : this.spanIndexByFile.get(si.getSourceId());
+        CoreInstance owner = (index == null) ? null : index.owningElement(si);
+        this.referenceOwners.put(stub, owner);
+        this.nodeOwners.put(ref, owner);
     }
 
     /**
