@@ -16,9 +16,12 @@ package org.finos.legend.pure.m3.stackgraph.search;
 
 import java.util.ArrayDeque;
 import java.util.Deque;
+import org.eclipse.collections.api.RichIterable;
 import org.eclipse.collections.api.factory.Lists;
+import org.eclipse.collections.api.factory.Maps;
 import org.eclipse.collections.api.factory.Sets;
 import org.eclipse.collections.api.list.MutableList;
+import org.eclipse.collections.api.map.MutableMap;
 import org.eclipse.collections.api.set.MutableSet;
 import org.finos.legend.pure.m3.stackgraph.graph.Edge;
 import org.finos.legend.pure.m3.stackgraph.graph.EdgeKind;
@@ -36,6 +39,18 @@ public final class PathSearch
     private final StackGraph graph;
     private final int maxStackDepth;
 
+    /**
+     * First-symbol index over each root's outgoing edges, keyed by target symbol, built once per instance.
+     * The Root judgment (see {@link #resolve(Node)}) uses this to jump directly to the pop edges of other
+     * roots that match the top of the current stack, instead of enqueueing every other root wholesale and
+     * rediscovering the match by walking all of that root's outgoing edges. A root is present as a key only
+     * when every one of its outgoing edges targets a POP node — this holds for every root the
+     * {@code StackGraphBuilder} produces (root edges are always {@code root -> pop}), but is not assumed:
+     * a root violating it is simply absent from this map and {@link #resolve(Node)} falls back to the
+     * original wholesale-enqueue behavior for it.
+     */
+    private final MutableMap<Node, MutableMap<String, MutableList<Edge>>> rootPopBySymbol;
+
     public PathSearch(StackGraph graph)
     {
         this(graph, DEFAULT_MAX_STACK_DEPTH);
@@ -45,6 +60,30 @@ public final class PathSearch
     {
         this.graph = graph;
         this.maxStackDepth = maxStackDepth;
+        this.rootPopBySymbol = buildRootPopIndex(graph);
+    }
+
+    private static MutableMap<Node, MutableMap<String, MutableList<Edge>>> buildRootPopIndex(StackGraph graph)
+    {
+        MutableMap<Node, MutableMap<String, MutableList<Edge>>> index = Maps.mutable.empty();
+        for (Node root : graph.getRoots())
+        {
+            RichIterable<Edge> edges = graph.getOutgoingEdges(root);
+            boolean allPop = edges.allSatisfy(edge -> edge.getTarget().getKind() == NodeKind.POP);
+            assert allPop : "Root node has a non-POP successor; first-symbol index invariant violated: " + root;
+            if (!allPop)
+            {
+                // Fall back to the unindexed (wholesale-enqueue) path for this root rather than crashing.
+                continue;
+            }
+            MutableMap<String, MutableList<Edge>> bySymbol = Maps.mutable.empty();
+            for (Edge edge : edges)
+            {
+                bySymbol.getIfAbsentPut(edge.getTarget().getSymbol(), Lists.mutable::empty).add(edge);
+            }
+            index.put(root, bySymbol);
+        }
+        return index;
     }
 
     public SearchResult resolve(Node referenceNode)
@@ -91,12 +130,43 @@ public final class PathSearch
                 // Root judgment: virtual edge to every other root
                 for (Node otherRoot : this.graph.getRoots())
                 {
-                    if (otherRoot != state.node)
+                    if (otherRoot == state.node)
                     {
+                        continue;
+                    }
+                    MutableMap<String, MutableList<Edge>> bySymbol = this.rootPopBySymbol.get(otherRoot);
+                    if (bySymbol == null)
+                    {
+                        // Unindexed root (would break the first-symbol invariant): original wholesale enqueue.
                         State next = new State(otherRoot, state.stack, state.usedImport, state.usedFallback);
                         if (visited.add(next))
                         {
                             queue.add(next);
+                        }
+                        continue;
+                    }
+                    if (state.stack.isEmpty())
+                    {
+                        continue;
+                    }
+                    MutableList<Edge> matching = bySymbol.get(state.stack.peek());
+                    if (matching == null)
+                    {
+                        continue;
+                    }
+                    for (Edge edge : matching)
+                    {
+                        State next = step(state, edge.getTarget(), edge.getKind());
+                        if (next != null)
+                        {
+                            if (next.stack.size() > this.maxStackDepth)
+                            {
+                                hitDepthCap = true;
+                            }
+                            else if (visited.add(next))
+                            {
+                                queue.add(next);
+                            }
                         }
                     }
                 }
