@@ -15,6 +15,7 @@
 package org.finos.legend.pure.m3.stackgraph.invalidation;
 
 import org.eclipse.collections.api.factory.Sets;
+import org.eclipse.collections.api.set.MutableSet;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -115,6 +116,27 @@ public class TestDivergenceReport
     }
 
     @Test
+    public void testTsvFieldsAreTrimmedOfStrayWhitespace()
+    {
+        // Stray leading/trailing spaces around a field (easy to introduce hand-editing a TSV) must not
+        // become part of the category or pattern -- otherwise a "classifier" match-kind pattern like
+        // " Foo" would never match the real classifier name "Foo".
+        DivergenceAllowlist allowlist = loadAllowlist(
+                "  cat  \tclassifier\t Foo \t justification text \t accept \n");
+        Assert.assertEquals("cat", allowlist.categoryFor("a::b", "Foo"));
+    }
+
+    @Test
+    public void testMalformedTsvWhitespaceOnlyFieldFailsLoad()
+    {
+        // A field that is non-empty only because it contains whitespace must still be rejected as
+        // malformed once trimmed -- otherwise a blank-looking justification or pattern would silently
+        // load as a valid, unmatchable (or accidentally over-matching) row.
+        Assert.assertThrows(IllegalStateException.class, () ->
+                loadAllowlist("cat\tclassifier\t   \tjustification text\taccept\n"));
+    }
+
+    @Test
     public void testExtraRatioArithmetic()
     {
         DivergenceAllowlist allowlist = DivergenceAllowlist.load();
@@ -156,16 +178,44 @@ public class TestDivergenceReport
         report.print(out);
         String text = out.toString();
 
-        Assert.assertTrue(text, text.contains("grammar-info-stub"));
-        Assert.assertTrue(text, text.contains("a::Y")); // unexplained missing sample
-        Assert.assertTrue(text, text.contains("1")); // some count of 1 appears
+        // a::G is allowlisted (grammar-info-stub, 1 occurrence); a::Y is unexplained missing (1 occurrence,
+        // 1 unique path); a::Extra is unexplained extra (1 occurrence). Assert the exact rendered lines
+        // rather than a loose "contains a digit" check.
+        Assert.assertTrue(text, text.contains("grammar-info-stub: 1"));
+        Assert.assertTrue(text, text.contains("    a::Y")); // unexplained missing sample, indented under its bucket
+        Assert.assertTrue(text, text.contains("SHADOW_MISSING unexplained (occurrences): 1"));
+        Assert.assertTrue(text, text.contains("SHADOW_MISSING unexplained (unique paths): 1"));
+        Assert.assertTrue(text, text.contains("SHADOW_EXTRA unexplained (occurrences): 1"));
+    }
+
+    @Test
+    public void testPrintDistinguishesUnexplainedMissingOccurrencesFromUniquePaths() throws IOException
+    {
+        // The same path (a::Y) diverges as unexplained SHADOW_MISSING in two separate cycles. The
+        // occurrence count must reflect both cycles (2); the unique-path count, and unexplainedMissing(),
+        // must reflect the single distinct path (1). print() must label the two differently so a reader
+        // cannot mistake one for the other (this pins the fix for the header/bucket count inconsistency
+        // flagged in review).
+        DivergenceReport report = new DivergenceReport(DivergenceAllowlist.load(), false);
+        report.recordCycle(Sets.mutable.with("a::Y"), Sets.mutable.empty(), path -> "Class");
+        report.recordCycle(Sets.mutable.with("a::Y"), Sets.mutable.empty(), path -> "Class");
+
+        Assert.assertEquals(1, report.unexplainedMissing().size());
+
+        StringBuilder out = new StringBuilder();
+        report.print(out);
+        String text = out.toString();
+
+        Assert.assertTrue(text, text.contains("SHADOW_MISSING unexplained (occurrences): 2"));
+        Assert.assertTrue(text, text.contains("SHADOW_MISSING unexplained (unique paths): 1"));
+        Assert.assertTrue(text, text.contains("unexplained (occurrences): 2")); // "Missing by category" bucket line
     }
 
     @Test
     public void testPrintCapsSamplesAtTen() throws IOException
     {
         DivergenceReport report = new DivergenceReport(DivergenceAllowlist.load(), false);
-        org.eclipse.collections.api.set.MutableSet<String> oldAnswer = Sets.mutable.empty();
+        MutableSet<String> oldAnswer = Sets.mutable.empty();
         for (int i = 0; i < 25; i++)
         {
             oldAnswer.add("a::Missing" + i);

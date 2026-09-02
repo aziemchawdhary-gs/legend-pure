@@ -51,6 +51,20 @@ import java.util.function.Function;
  * #unexplainedMissing()} returns the full cumulative set (across every {@link #recordCycle} call so
  * far), and in {@code assertMode} a cycle that produces any unexplained {@code SHADOW_MISSING} paths
  * throws an {@link AssertionError} immediately, naming every such path from that cycle.</p>
+ *
+ * <p><b>Occurrences vs. unique paths.</b> This report tracks two different notions of "how much
+ * divergence": an <i>occurrence</i> count increments once per divergence per cycle, so a path that
+ * diverges in every one of 10 cycles contributes 10 occurrences; a <i>unique-path</i> count counts that
+ * same path once no matter how many cycles it recurred in. {@code extraRatio()} and every cumulative
+ * total ({@code cumulativeMissingTotal}, {@code cumulativeExtraTotal}, and every per-category {@code
+ * Bucket} count, including the "unexplained" buckets) are occurrence counts — this keeps the arithmetic
+ * self-consistent (a report's totals equal the sum of its category buckets) and matches {@code
+ * extraRatio()}'s own occurrence-based numerator. {@link #unexplainedMissing()} is the one exception:
+ * it returns unique paths, because it exists to answer "which distinct elements need a look", not "how
+ * many times did resolution disagree" — a gate or CI job iterating it to report/fix bugs should not see
+ * the same path N times just because N cycles touched it. {@link #print(Appendable)} surfaces both
+ * notions for the SHADOW_MISSING side and labels each explicitly (occurrences vs. unique paths) so the
+ * two are never confused for one another.</p>
  */
 public final class DivergenceReport
 {
@@ -94,7 +108,13 @@ public final class DivergenceReport
      * @param classifierLookup  resolves an element path to its classifier's short name (e.g. {@code
      *                          "Class"}), for {@code classifier} match-kind allowlist entries
      * @throws AssertionError if {@code assertMode} is set and this cycle produced any unexplained
-     *                        {@code SHADOW_MISSING} paths — the message names every such path
+     *                        {@code SHADOW_MISSING} paths — the message names every such path. This is
+     *                        thrown only after this cycle's results (including the offending paths)
+     *                        have already been folded into the cumulative state, deliberately: a caller
+     *                        that catches the {@code AssertionError} (e.g. to keep scanning a corpus
+     *                        past the first failing cycle) still gets a {@link #print(Appendable)} /
+     *                        {@link #unexplainedMissing()} that reflects every cycle recorded so far,
+     *                        including the one that just threw.
      */
     public void recordCycle(SetIterable<String> oldAnswerPaths, SetIterable<String> shadowAnswerPaths,
                              Function<String, String> classifierLookup)
@@ -174,7 +194,11 @@ public final class DivergenceReport
     /**
      * Write a human-readable summary of this report's cumulative state: overall totals, then per-category
      * counts (plus an "unexplained" bucket) for both SHADOW_MISSING and SHADOW_EXTRA, each with at most
-     * ten sample element paths.
+     * ten sample element paths. All per-category and "unexplained (occurrences)" counts are occurrence
+     * counts (see the class javadoc's "Occurrences vs. unique paths" note); the one exception is the
+     * header's separate "unexplained missing (unique paths)" line, which matches {@link
+     * #unexplainedMissing()}'s deduplicated count exactly — both are labeled explicitly below so the two
+     * notions are never mistaken for one another.
      *
      * @param out where to write the summary
      */
@@ -183,16 +207,17 @@ public final class DivergenceReport
         SafeAppendable safe = SafeAppendable.wrap(out);
         safe.append("DivergenceReport\n");
         safe.append("  cycles: ").append(this.cycles).append('\n');
-        safe.append("  SHADOW_MISSING total: ").append(this.cumulativeMissingTotal)
-                .append(" (unexplained: ").append(this.unexplainedMissingAll.size()).append(")\n");
-        safe.append("  SHADOW_EXTRA total: ").append(this.cumulativeExtraTotal)
-                .append(" (unexplained: ").append(this.extraUnexplainedBucket.count).append(")\n");
+        safe.append("  SHADOW_MISSING total (occurrences): ").append(this.cumulativeMissingTotal).append('\n');
+        safe.append("  SHADOW_MISSING unexplained (occurrences): ").append(this.missingUnexplainedBucket.count).append('\n');
+        safe.append("  SHADOW_MISSING unexplained (unique paths): ").append(this.unexplainedMissingAll.size()).append('\n');
+        safe.append("  SHADOW_EXTRA total (occurrences): ").append(this.cumulativeExtraTotal).append('\n');
+        safe.append("  SHADOW_EXTRA unexplained (occurrences): ").append(this.extraUnexplainedBucket.count).append('\n');
         safe.append("  extraRatio: ").append(extraRatio()).append('\n');
 
-        safe.append("Missing by category:\n");
+        safe.append("Missing by category (occurrences):\n");
         printBuckets(safe, this.missingByCategory, this.missingUnexplainedBucket);
 
-        safe.append("Extra by category:\n");
+        safe.append("Extra by category (occurrences):\n");
         printBuckets(safe, this.extraByCategory, this.extraUnexplainedBucket);
     }
 
@@ -207,7 +232,7 @@ public final class DivergenceReport
                 safe.append("    ").append(sample).append('\n');
             }
         }
-        safe.append("  unexplained: ").append(unexplained.count).append('\n');
+        safe.append("  unexplained (occurrences): ").append(unexplained.count).append('\n');
         for (String sample : unexplained.samples)
         {
             safe.append("    ").append(sample).append('\n');

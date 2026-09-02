@@ -41,9 +41,11 @@ import java.nio.charset.StandardCharsets;
  * because the two answers are modeling genuinely different things) or {@code phase2-model} (expected
  * to close once a later phase adds the missing model support). Rows are matched in file order; the
  * first match wins. Blank lines and lines whose first non-whitespace character is {@code #} are
- * skipped as comments. Any other malformed row (wrong field count, unknown match-kind, or an empty
- * field) fails {@link #load()} with {@link IllegalStateException} — this file gates correctness, so a
- * bad row must fail loudly at load rather than silently mis-classify divergences.</p>
+ * skipped as comments. Each of the 5 fields of a data row is trimmed independently, so stray
+ * whitespace around a tab does not become part of a category, pattern, or other field. Any other
+ * malformed row (wrong field count, unknown match-kind, or a field that is empty once trimmed) fails
+ * {@link #load()} with {@link IllegalStateException} — this file gates correctness, so a bad row must
+ * fail loudly at load rather than silently mis-classify divergences.</p>
  */
 public final class DivergenceAllowlist
 {
@@ -116,11 +118,13 @@ public final class DivergenceAllowlist
                     + " (expected 5 tab-separated fields: category, match-kind, pattern, justification, "
                     + "disposition — found " + fields.length + "): " + line);
         }
-        String category = fields[0];
-        String matchKindText = fields[1];
-        String pattern = fields[2];
-        String justification = fields[3];
-        String disposition = fields[4];
+        // Each field is trimmed independently so stray leading/trailing whitespace around a tab (easy to
+        // introduce by hand-editing this file) can't silently poison a pattern or category comparison.
+        String category = fields[0].trim();
+        String matchKindText = fields[1].trim();
+        String pattern = fields[2].trim();
+        String justification = fields[3].trim();
+        String disposition = fields[4].trim();
         if (category.isEmpty() || pattern.isEmpty() || justification.isEmpty() || disposition.isEmpty())
         {
             throw new IllegalStateException("Malformed divergence allowlist row at line " + lineNumber
