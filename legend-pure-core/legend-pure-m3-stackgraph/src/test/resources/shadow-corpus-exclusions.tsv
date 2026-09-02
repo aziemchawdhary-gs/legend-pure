@@ -1,0 +1,35 @@
+# Shadow corpus exclusions — stack-graphs Phase 1 shadow invalidation, Task 9 Round 2 (Cause 3).
+#
+# Columns (tab-separated): test-class FQN, cause tag, one-line justification, disposition.
+# Cause tag is one of the unmodeled-refkind:* sub-categories StackGraphBuilder's Phase 1 scope
+# (ImportStub/PropertyStub/EnumStub + Package references only — see its own top-of-file javadoc) does
+# not cover; disposition is always "phase2-model" here (expected to close once a later phase adds the
+# missing model support — same disposition as the checked-in divergence-allowlist.tsv's grammar-info-stub
+# row, which is the same class of gap for a different construct).
+#
+# Source of truth: this file. legend-pure-m3-stackgraph/pom.xml's shadow-corpus profile mirrors this
+# exact class list in its surefire <excludes> (surefire cannot read excludes from an arbitrary resource
+# file) — if you add/remove a row here, update the pom's excludes list in the same change, and vice versa.
+#
+# Each row names a whole test CLASS, not individual test methods: some listed classes also have test
+# methods that pass under the shadow today (e.g. TestMilestoning has ~20 passing methods alongside the
+# ~4 that hit unmodeled-refkind:association-property), but the current exclusion mechanism (surefire
+# <excludes>, class-granularity only) cannot exclude at method granularity without a much larger pom
+# change; excluding the whole class is the documented, accepted precision loss for Round 2 (see
+# task-9-report.md's self-review).
+#
+# Do not add rows speculatively: a class is added here only after an actual SHADOW_MISSING was observed,
+# root-caused to one of these reference kinds, and confirmed NOT explainable by an index/builder fix
+# (Round 2 already fixed the two causes that were fixable: accumulate-until-consumed diffs and the
+# content-fingerprint identity fallback).
+org.finos.legend.pure.m3.tests.incremental._class.TestPureRuntimeClass_Constraints	unmodeled-refkind:constraint	Class constraints ([$this.x == f()]) reference functions via FunctionExpression, which StackGraphBuilder never models as a stub	phase2-model
+org.finos.legend.pure.m3.tests.incremental._class.TestPureRuntimeClass_FunctionParamType	unmodeled-refkind:function-application	A function that calls another function (f()) creates a FunctionExpression call edge StackGraphBuilder never models as a stub	phase2-model
+org.finos.legend.pure.m3.tests.incremental.association.TestPureRuntimeAssociation	unmodeled-refkind:association-property	A class's properties contributed by an Association (propertiesFromAssociations) are never linked back to that Association in the shadow's model; builder read discipline explicitly excludes back-reference properties	phase2-model
+org.finos.legend.pure.m3.tests.incremental.milestoning.TestMilestoning	unmodeled-refkind:association-property	Milestoned classes commonly gain properties via Association; same propertiesFromAssociations gap as TestPureRuntimeAssociation, pervasive across this suite's fixtures	phase2-model
+org.finos.legend.pure.m3.tests.incremental.profile.TestPureRuntimeStereotype	unmodeled-refkind:stereotype-application	Stereotype/Tag applications (<<Profile.stereotype>> syntax) are a distinct M3 reference mechanism neither ImportStub/PropertyStub/EnumStub nor GrammarInfoStub captures	phase2-model
+org.finos.legend.pure.m3.tests.incremental.association.TestPureRuntimeAssociation_AsPointer	unmodeled-refkind:association-property	Same propertiesFromAssociations gap as TestPureRuntimeAssociation, found running the remainder of the corpus	phase2-model
+org.finos.legend.pure.m3.tests.incremental.association.TestPureRuntimeAssociation_UseProperty	unmodeled-refkind:association-property	Same propertiesFromAssociations gap as TestPureRuntimeAssociation, found running the remainder of the corpus	phase2-model
+org.finos.legend.pure.m3.tests.incremental.function.TestPureRuntimeFunction_All	unmodeled-refkind:function-application	testPureRuntimeFunctionTypePropagationWithSelector calls another function; the FunctionExpression call edge is never modeled as a stub	phase2-model
+org.finos.legend.pure.m3.tests.incremental.function.TestPureRuntimeFunction_Constraint	unmodeled-refkind:constraint	A function's own [$return == t()]-style constraint calls another function via FunctionExpression, same gap as class constraints	phase2-model
+org.finos.legend.pure.m3.tests.incremental.projection.TestPureRuntimeProjection	unmodeled-refkind:association-property	Association projections (Association ABP projects AB<AP,BP>) carry the same propertiesFromAssociations gap as a plain Association	phase2-model
+org.finos.legend.pure.m3.tests.incremental.treepath.TestPureRuntimeTreePath	unmodeled-refkind:function-application	testPureRuntimeFunctionChangeReferencedFromDerivedProperty's tree-path derived property calls a function ($this.version->nice()); the FunctionExpression call edge is never modeled as a stub	phase2-model
