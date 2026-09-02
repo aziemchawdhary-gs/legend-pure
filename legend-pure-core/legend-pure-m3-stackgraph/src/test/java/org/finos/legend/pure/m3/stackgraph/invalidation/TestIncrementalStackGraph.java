@@ -50,6 +50,13 @@ import org.junit.Test;
  * that finds nothing further changed) must both leave that first change visible via {@link
  * IncrementalStackGraph#getLastChangedFiles} — it must not be silently dropped by the second, no-op
  * call — and only {@link IncrementalStackGraph#consumeChangedFiles} clears it.</p>
+ *
+ * <p>{@link #testUnresolvedStubRetriedAndHealedOnSubsequentTouchedCycle()} covers the second-round gap
+ * the accumulate-until-consumed amendment's own corpus re-run exposed: an unresolved stub must be retried
+ * — and, once healed, correctly re-added to {@code targetFileToStubs} — on every touched cycle, not only
+ * one that touches its own owner file, so that a <em>second</em> remove/restore of the same target file
+ * still force-invalidates the dependent (see {@link IncrementalStackGraph}'s "Unresolved-stub retry"
+ * javadoc).</p>
  */
 public class TestIncrementalStackGraph extends AbstractPureTestWithCoreCompiled
 {
@@ -77,7 +84,7 @@ public class TestIncrementalStackGraph extends AbstractPureTestWithCoreCompiled
     public void cleanRuntime()
     {
         for (String id : new String[] {"a.pure", "b.pure", "delpure.pure", "ccfi_t.pure", "ccfi_m.pure", "ccfi_l.pure",
-                "rmtgt_t.pure", "rmtgt_m.pure", "acc.pure"})
+                "rmtgt_t.pure", "rmtgt_m.pure", "acc.pure", "retry_t.pure", "retry_m.pure"})
         {
             if (runtime.getSourceById(id) != null)
             {
@@ -261,5 +268,53 @@ public class TestIncrementalStackGraph extends AbstractPureTestWithCoreCompiled
                 Sets.mutable.with("acc.pure"), consumed);
         Assert.assertTrue("consumeChangedFiles() must clear the pending set for the next cycle",
                 baseline.getLastChangedFiles().isEmpty());
+    }
+
+    @Test
+    public void testUnresolvedStubRetriedAndHealedOnSubsequentTouchedCycle()
+    {
+        // Task 9 second-round regression, found while re-running the corpus after the accumulate-until-
+        // consumed amendment: a stub that goes unresolved (its cached target's file was removed) must get
+        // a chance to re-resolve on a LATER touched cycle even though neither its own owner file nor (by
+        // definition, since an unresolved entry has no cached target) any file it currently targets is
+        // touched again. Without this, the second of two repeated remove/restore rounds on the same
+        // target file -- exactly what RuntimeVerifier.verifyOperationIsStable's 3x-repeated script does --
+        // finds nothing via targetFileToStubs, since the stub was never re-added as MATCHED by the first
+        // round's restore (nothing re-triggered it then, either).
+        compileTestSource("retry_t.pure", "Class spikepkg::inc::StackGraphSpikeIncRetryT {}\n");
+        compileTestSource("retry_m.pure",
+                "Class spikepkg::inc::StackGraphSpikeIncRetryM\n{\n   p : spikepkg::inc::StackGraphSpikeIncRetryT[1];\n}\n");
+        baseline.applySourceChanges(runtime.getSourceRegistry());
+        baseline.consumeChangedFiles();
+
+        CoreInstance mElement = processorSupport.package_getByUserPath("spikepkg::inc::StackGraphSpikeIncRetryM");
+        Assert.assertNotNull(mElement);
+
+        // Same "simulate T's file removed" technique as
+        // testRemovedTargetInvalidatesUntouchedDependentViaForcedInvalidation: a SourceRegistry view that
+        // omits retry_t.pure's source, so this shadow's own bookkeeping sees a removal without needing to
+        // make the (still fully live, still compiled) real runtime uncompilable.
+        SourceRegistry live = runtime.getSourceRegistry();
+        SourceRegistry withoutT = new SourceRegistry(live.getCodeStorage(), null)
+        {
+            @Override
+            public RichIterable<Source> getSources()
+            {
+                return live.getSources().reject(source -> "retry_t.pure".equals(source.getId()));
+            }
+        };
+
+        for (int round = 1; round <= 2; round++)
+        {
+            baseline.applySourceChanges(withoutT); // simulated removal
+            Assert.assertTrue("round " + round + " removal must force-invalidate M",
+                    baseline.computeInvalidation(Sets.mutable.with("retry_t.pure")).contains(mElement));
+            baseline.consumeChangedFiles();
+
+            baseline.applySourceChanges(live); // simulated restore, content identical to before
+            Assert.assertTrue("round " + round + " restore must force-invalidate M (its resolution just changed back)",
+                    baseline.computeInvalidation(Sets.mutable.with("retry_t.pure")).contains(mElement));
+            baseline.consumeChangedFiles();
+        }
     }
 }

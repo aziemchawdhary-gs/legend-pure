@@ -134,15 +134,32 @@ import org.finos.legend.pure.m4.coreinstance.SourceInformation;
  * content-fingerprint diff (decision rule 2) ever flagging them as changed, silently reintroducing the
  * escape this class otherwise closes.</p>
  *
- * <h2>Known gap — NOT_FOUND is not reconsidered on later supply (Task 8 awareness)</h2>
- * <p>A cross-file-affected stub that re-resolves to "unresolved" (its target file was removed, or the
- * target name is otherwise gone) is, by construction, never posted to {@link #targetFileToStubs} (only
- * MATCHED entries are). If a <em>later</em> cycle re-adds a file that would newly satisfy that stub, this
- * class has no record linking the stub back to that file/name, so it is never picked up for
- * re-resolution — the entry stays "unresolved" until its own owning file happens to be touched again for
- * an unrelated reason. This mirrors the same asymmetry {@link ResolutionCache} already has for
- * "unresolved"/"ambiguous" entries (no target to index under); Task 8 should be aware that a
- * currently-broken reference is not automatically healed by an unrelated file addition.</p>
+ * <h2>Unresolved-stub retry (Task 9 amendment, closes the gap below for the common case)</h2>
+ * <p>The "Known gap" this section used to describe — a stub that re-resolves to "unresolved" is never
+ * posted to {@link #targetFileToStubs} (only MATCHED entries are), so a later cycle that would newly
+ * satisfy it has no record linking it back — turned out not to be a corner case: the corpus idiom this
+ * amendment targets (delete a source another compiled source depends on; compile expecting failure;
+ * restore with identical content; compile again) is applied <em>repeatedly</em> (m3-core's {@code
+ * RuntimeVerifier.verifyOperationIsStable} runs its script three times by default), and every repetition
+ * after the first goes through exactly this gap: the first delete correctly force-invalidates the
+ * dependent (found via {@link #targetFileToStubs}, since its entry was still MATCHED going into that
+ * cycle), but the entry then sits "unresolved" through the restore (nothing re-triggers it, since its
+ * owner file was never touched and {@link #targetFileToStubs} no longer references it) — so the
+ * <em>second</em> delete finds nothing via {@link #targetFileToStubs} either, and the corpus's own
+ * expected-stable-across-repeated-edits assertion fails.</p>
+ * <p>{@link #unresolvedStubs} tracks every currently-unresolved/ambiguous/depth-cap stub still present in
+ * the graph. On every cycle that touches anything (not just the stub's own owner or a file it once
+ * targeted), every stub in this set is retried alongside the cycle's normal owner-file/cross-file set,
+ * and its referring element is folded into {@link #pendingForcedInvalidations} exactly like a normal
+ * cross-file re-resolution (its resolution outcome may have changed, in either direction). This is safe
+ * to do unconditionally because a real, warning-free compiled program has ~zero permanently-unresolved
+ * stubs (Task 8's parity harness measured 100% MATCH over the full platform) — {@link #unresolvedStubs}
+ * only ever holds the handful of <em>transiently</em> broken references a test fixture's mid-edit state
+ * introduces, so retrying all of them every cycle is cheap. It does not fully close the general gap: a
+ * stub whose target was never a MATCHED entry we ever cached (e.g. one that has been unresolved since
+ * this shadow's very first {@link #buildFull}) is still never retried unless something else adds it to
+ * {@link #unresolvedStubs} first — an accepted residual asymmetry, matching {@link ResolutionCache}'s own
+ * pre-existing "unresolved"/"ambiguous" indexing gap.</p>
  */
 public final class IncrementalStackGraph
 {
@@ -155,6 +172,10 @@ public final class IncrementalStackGraph
     private final MutableMap<String, MutableSet<CoreInstance>> priorElementsByFile = Maps.mutable.empty();
     private final MutableMap<CoreInstance, ResolutionCache.Entry> entriesByStub = Maps.mutable.empty();
     private final MutableMap<String, MutableSet<CoreInstance>> targetFileToStubs = Maps.mutable.empty();
+    // Every stub currently cached as non-MATCHED (unresolved/ambiguous/depth-cap) — see class javadoc,
+    // "Unresolved-stub retry". Retried on every touched cycle so a stub that goes unresolved gets a
+    // chance to heal once whatever it needed comes back, not only when its own owner file is touched.
+    private final MutableSet<CoreInstance> unresolvedStubs = Sets.mutable.empty();
     private InvertedIndex index = InvertedIndex.from(Lists.immutable.<ResolutionCache.Entry>empty());
     // File ids found added/changed/removed by any applySourceChanges call since the last
     // consumeChangedFiles() (see class javadoc, "Accumulate-until-consumed diffs") — accumulated (set
@@ -271,6 +292,22 @@ public final class IncrementalStackGraph
                 });
             }
         });
+        // Unresolved-stub retry (see class javadoc): every currently-non-MATCHED stub gets a chance to
+        // re-resolve on any touched cycle, not only one that touches its own owner file or (impossible,
+        // since it has no cached target) a file it once targeted. Same forced-invalidation treatment as
+        // the cross-file loop above: its resolution outcome may have changed either direction.
+        this.unresolvedStubs.forEach(stub ->
+        {
+            if (newBuilt.getReferenceNode(stub) != null)
+            {
+                ResolutionCache.Entry staleEntry = this.entriesByStub.get(stub);
+                if (staleEntry != null)
+                {
+                    forcedInvalidations.add(staleEntry.getReferringElement());
+                }
+                stubsToCompute.add(stub);
+            }
+        });
 
         // Drop stale entries: anything owned by a touched file (dead, if that file was reparsed or
         // removed) and anything about to be recomputed (avoid a stale/fresh duplicate).
@@ -284,9 +321,32 @@ public final class IncrementalStackGraph
             }
         });
         toDrop.forEach(this.entriesByStub::remove);
+        // Anything dropped but not about to be recomputed no longer exists in any resolvable form (its
+        // stub itself is gone from the rebuilt graph) — stop retrying it.
+        toDrop.forEach(stub ->
+        {
+            if (!stubsToCompute.contains(stub))
+            {
+                this.unresolvedStubs.remove(stub);
+            }
+        });
 
         MutableMap<CoreInstance, ResolutionCache.Entry> fresh = ResolutionCache.computeRestricted(newBuilt, stubsToCompute);
         this.entriesByStub.putAll(fresh);
+        // Keep unresolvedStubs in sync with this cycle's fresh outcomes: matched entries drop out (no
+        // longer need retrying); anything else (still/newly unresolved, ambiguous, or depth-capped) is
+        // tracked for the next touched cycle.
+        fresh.forEachKeyValue((stub, entry) ->
+        {
+            if (entry.isMatched())
+            {
+                this.unresolvedStubs.remove(stub);
+            }
+            else
+            {
+                this.unresolvedStubs.add(stub);
+            }
+        });
 
         // Rebuild the target-file side map and the inverted index from the (now up to date) cache — both
         // cheap map passes, not PathSearch, so this stays proportional to live entry count, not program
