@@ -590,5 +590,11 @@ public final class StackGraphBuilder
         {
             return buildElementReference(importGroup, splitPath(idOrPath), Lists.immutable.empty());
         }
+
+        public Node addSyntheticMemberReference(String fileId, String classPath, String memberName)
+        {
+            FileSubgraph f = fileFor(fileId);
+            return pushChainToTarget(f, splitPath(classPath).with(MEMBER).with(memberName), f.getRoot());
+        }
     }
 }
