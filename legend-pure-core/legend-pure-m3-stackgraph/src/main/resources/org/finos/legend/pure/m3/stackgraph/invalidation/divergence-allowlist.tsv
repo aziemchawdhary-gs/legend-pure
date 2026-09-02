@@ -1,0 +1,13 @@
+# Divergence allowlist — stack-graphs Phase 1 shadow invalidation (spec §5, §8).
+#
+# Columns (tab-separated): category, match-kind (classifier|path-prefix), pattern, justification, disposition.
+# match-kind "classifier" is an exact match on the resolved element's classifier name.
+# match-kind "path-prefix" is a String#startsWith match on the element's path.
+# disposition "accept" = expected to remain a divergence indefinitely.
+# disposition "phase2-model" = expected to close once a later phase adds the missing model support.
+#
+# Do not add rows speculatively: categories are added only when an actual divergence is observed and
+# justified (see Tasks 9-10). This file gates correctness — a malformed row fails DivergenceAllowlist.load().
+grammar-info-stub	classifier	GrammarInfoStub	DSL-parser-filled stubs are unmodeled (spec §6.3)	phase2-model
+no-owning-element	classifier	*unowned*	instances outside any element span (import groups, top-levels)	accept
+deleted-element	classifier	*deleted*	elements removed this cycle cannot be classified post-hoc	accept
