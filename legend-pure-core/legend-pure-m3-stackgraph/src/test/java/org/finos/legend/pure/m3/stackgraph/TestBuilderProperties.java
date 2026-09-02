@@ -97,22 +97,16 @@ public class TestBuilderProperties extends AbstractPureTestWithCoreCompiled
         }
     }
 
-    // TODO-FINDINGS: pins a KNOWN LIMITATION, not desired behavior — see Task 8 report / code review.
-    // Task 8's gap-iteration fix for a false-ambiguity bug (StackGraphBuilder#linkGeneralizations linking
-    // a subclass's memberScope to its superclass's memberScope, instead of through a completable
-    // NAME-reference chain) only adds that link when both memberScope nodes live in the SAME FileSubgraph
-    // (FileSubgraph.addEdge forbids a cross-file edge). Before that fix, cross-file inherited-member
-    // fallthrough worked, but only by riding the very bug the fix removed: buildElementReference's
-    // reference chain always lives in the REFERENCING (subclass's) file, so PathSearch's root-judgment
-    // teleportation could still cross into the superclass's own file at search time, land on the
-    // superclass's own definition pop, and continue (via the since-removed defNode->memberScope edge)
-    // into the superclass's memberScope in that other file. Reproducing cross-file reach without
-    // reintroducing that bug needs a new mechanism this spike does not implement (e.g. a dedicated
-    // non-completable member-lookup entry point per class, itself reachable through root-judgment) — a
-    // named limitation for the Task 10 findings doc / Phase 1 design. If a future fix makes baseProp
-    // resolve here, change the assertion below to MATCHED and update/remove this comment.
+    // The `·member·` sentinel (StackGraphBuilder.MEMBER) makes cross-file inherited-member lookup
+    // first-class: property references push [ownerPath..., MEMBER, propName] from a root-based chain,
+    // and generalization edges push [superPath..., MEMBER] to re-enter the sentinel in the superclass's
+    // own file via root judgment. A name lookup never pushes MEMBER, so a MEMBER pop can only be
+    // traversed once a member reference already put it on the stack — the sentinel is invisible to
+    // plain name lookups by construction, which is what lets member scopes now be reached directly
+    // from defNode without reintroducing the false-completion bug the Phase 0 workarounds guarded
+    // against. See StackGraphBuilder#addGeneralizationEdges and #buildPropertyStubReference.
     @Test
-    public void testCrossFileInheritedPropertyIsKnownLimitation()
+    public void testCrossFileInheritedPropertyResolves()
     {
         compileTestSource("base.pure",
                 "Class spikepkg::propsxf::StackGraphSpikeXFileBase\n" +
@@ -153,11 +147,13 @@ public class TestBuilderProperties extends AbstractPureTestWithCoreCompiled
         Assert.assertSame(subPropStub.getValueForMetaPropertyToOne(M3Properties.resolvedProperty), subPropResolution.getTarget());
 
         // baseProp is inherited from a superclass declared in a DIFFERENT source file (base.pure) than
-        // the subclass (sub.pure) — the known limitation. Pure itself resolves this fine (it's a normal,
-        // successfully-compiled projection); the stack graph does not.
+        // the subclass (sub.pure). The MEMBER sentinel makes this resolve like any other cross-file
+        // lookup: the generalization edge re-pushes [superPath..., MEMBER] and root judgment carries it
+        // into base.pure's own MEMBER pop for StackGraphSpikeXFileBase.
         Node basePropRef = built.getReferenceNode(basePropStub);
         Assert.assertNotNull(String.valueOf(built.getSkipReason(basePropStub)), basePropRef);
         Resolution basePropResolution = new PureResolutionPolicy().resolve(new PathSearch(built.getGraph()).resolve(basePropRef), true);
-        Assert.assertEquals(Outcome.NOT_FOUND, basePropResolution.getOutcome());
+        Assert.assertEquals(Outcome.MATCHED, basePropResolution.getOutcome());
+        Assert.assertSame(basePropStub.getValueForMetaPropertyToOne(M3Properties.resolvedProperty), basePropResolution.getTarget());
     }
 }

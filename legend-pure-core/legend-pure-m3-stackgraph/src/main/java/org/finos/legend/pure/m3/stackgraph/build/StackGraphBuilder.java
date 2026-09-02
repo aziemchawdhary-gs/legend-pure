@@ -16,11 +16,9 @@ package org.finos.legend.pure.m3.stackgraph.build;
 
 import org.eclipse.collections.api.factory.Lists;
 import org.eclipse.collections.api.factory.Maps;
-import org.eclipse.collections.api.factory.Sets;
 import org.eclipse.collections.api.list.ListIterable;
 import org.eclipse.collections.api.list.MutableList;
 import org.eclipse.collections.api.map.MutableMap;
-import org.eclipse.collections.api.set.MutableSet;
 import org.finos.legend.pure.m3.navigation.Instance;
 import org.finos.legend.pure.m3.navigation.M3Paths;
 import org.finos.legend.pure.m3.navigation.M3Properties;
@@ -35,9 +33,6 @@ import org.finos.legend.pure.m3.stackgraph.graph.FileSubgraph;
 import org.finos.legend.pure.m3.stackgraph.graph.Node;
 import org.finos.legend.pure.m3.stackgraph.graph.NodeTag;
 import org.finos.legend.pure.m3.stackgraph.graph.StackGraph;
-import org.finos.legend.pure.m3.stackgraph.search.PathResult;
-import org.finos.legend.pure.m3.stackgraph.search.PathSearch;
-import org.finos.legend.pure.m3.stackgraph.search.SearchResult;
 import org.finos.legend.pure.m4.ModelRepository;
 import org.finos.legend.pure.m4.coreinstance.CoreInstance;
 import org.finos.legend.pure.m4.tools.GraphNodeIterable;
@@ -58,6 +53,9 @@ import org.finos.legend.pure.m4.tools.GraphNodeIterable;
  */
 public final class StackGraphBuilder
 {
+    /** Reserved member-access sentinel: no Pure identifier can contain U+00B7. */
+    public static final String MEMBER = "·member·";
+
     public static final String TOP_LEVEL_FILE_ID = "/::topLevel::";
     private static final String ROOT_PACKAGE_SYMBOL = "::"; // bare `::` root-package-reference syntax (Task 8 gap fix)
 
@@ -68,8 +66,7 @@ public final class StackGraphBuilder
     private final MutableMap<CoreInstance, String> skipped = Maps.mutable.empty();
     private final MutableMap<String, Node> popChains = Maps.mutable.empty();        // fileId + " " + path -> pop node
     private final MutableMap<CoreInstance, Node> sectionScopes = Maps.mutable.empty(); // ImportGroup -> scope node (Task 4)
-    private final MutableMap<CoreInstance, Node> classMemberScopes = Maps.mutable.empty(); // Class -> member scope node (Task 6)
-    private final MutableList<PendingGeneralization> pendingGeneralizations = Lists.mutable.empty(); // Task 8 gap fix
+    private final MutableMap<Node, Node> memberPops = Maps.mutable.empty(); // class pop node -> its MEMBER pop (memoized)
 
     public StackGraphBuilder(ModelRepository repository, ProcessorSupport processorSupport)
     {
@@ -81,7 +78,6 @@ public final class StackGraphBuilder
     {
         buildSpecialTypes();
         sourceRegistry.getSources().forEach(this::buildDefinitions);
-        linkGeneralizations();
         collectAndBuildReferences();
         return new BuiltGraph(this.graph, this.referenceNodes, this.skipped, new TestAccess());
     }
@@ -140,20 +136,19 @@ public final class StackGraphBuilder
         }
         else if (Instance.instanceOf(element, M3Paths.Class, this.processorSupport))
         {
-            // Empirical finding (Task 8 gap iteration): memberScope must NOT be reachable from defNode.
-            // PathSearch keeps exploring a state's outgoing edges even after recording a completion at
-            // that state (stack empty at a definition pop), so a plain qualified/unqualified NAME lookup
-            // for this class (which legitimately completes at defNode with an empty stack) would also
-            // walk any PUSH-based edge hung off memberScope (generalization fallthrough, in particular)
-            // with that SAME empty stack — restarting a brand-new, unrelated name search that can
-            // spuriously complete a SECOND time at some other class (observed for CC_Address, which
-            // "extends CC_GeographicEntity": resolving a plain reference to CC_Address surfaced BOTH
-            // CC_Address and CC_GeographicEntity as candidates, an over-approximation the real Pure
-            // resolver never sees). memberScope is only ever meant to be entered while still looking for
-            // a MEMBER symbol (i.e., with a non-empty stack) — that entry happens exclusively via
-            // classMemberScopes (see buildPropertyStubReference below), never via defNode, so this edge
-            // was pure liability with no legitimate use.
+            // The `·member·` sentinel (MEMBER) gates all member access behind a POP that can only be
+            // traversed when MEMBER is already on top of the search stack. A plain qualified/unqualified
+            // NAME lookup for this class completes at defNode with an EMPTY stack; PathSearch keeps
+            // exploring defNode's outgoing edges after that completion, but the MEMBER pop below rejects
+            // an empty stack (PathSearch#step: a POP node requires the stack's top symbol to match), so a
+            // name search can never wander from defNode into memberScope. Only a reference that already
+            // pushed MEMBER onto its stack (buildPropertyStubReference, addGeneralizationEdges) can pass
+            // through — the sentinel is invisible to name lookups by construction, which is what makes it
+            // safe to wire memberScope directly off defNode (unlike the Phase 0 workaround this replaces:
+            // classMemberScopes plus a deferred, same-file-only linkGeneralizations pass).
+            Node memberPop = memberPopFor(f, defNode);
             Node memberScope = f.newScope();
+            f.addEdge(memberPop, memberScope);
             element.getValueForMetaPropertyToMany(M3Properties.properties).forEach(p ->
                     addMemberPop(f, memberScope, p.getName(), p));
             element.getValueForMetaPropertyToMany(M3Properties.qualifiedProperties).forEach(qp ->
@@ -163,25 +158,7 @@ public final class StackGraphBuilder
                 Node allVersions = f.newPop("allVersions", element, NodeTag.MILESTONING);
                 f.addEdge(memberScope, allVersions);
             }
-            this.pendingGeneralizations.add(new PendingGeneralization(f, memberScope, element));
-            // Fallthrough (Task 7): a member lookup that a PropertyStub push chain lands on directly
-            // (see buildPropertyStubReference below) enters this memberScope node without ever passing
-            // through this file's root, so it cannot reach cross-file association-contributed property
-            // pops (those hang off popChain(assocFile, classPath) in the ASSOCIATION's own file
-            // subgraph). Re-push the class's own qualified path and re-enter this file's root so an
-            // unmatched member lookup can ride PathSearch's root-judgment virtual edges into other
-            // files' pop chains, including association candidates. Uses NORMAL edge kind (not
-            // FALLBACK): FALLBACK is reserved for sectionScope's own root-level fallback, which
-            // PureResolutionPolicy partitions on in qualified=false mode; tagging this reentry edge
-            // FALLBACK would conflate "no import matched" provenance with "cross-file reentry
-            // over-approximation" provenance, which Task 8 must measure separately via
-            // NodeTag.ASSOCIATION_CANDIDATE on the contributed pop itself, not via usedFallbackEdge().
-            // Safe from the defNode->memberScope bug above: this reentry is only reachable via
-            // classMemberScopes (non-empty stack), never from defNode directly.
-            String classPath = PackageableElement.getUserPathForPackageableElement(element);
-            Node classPathReentry = pushChainToTarget(f, splitPath(classPath), f.getRoot());
-            f.addEdge(memberScope, classPathReentry);
-            this.classMemberScopes.put(element, memberScope);
+            addGeneralizationEdges(f, memberScope, element);
         }
         else if (Instance.instanceOf(element, M3Paths.Association, this.processorSupport))
         {
@@ -228,8 +205,9 @@ public final class StackGraphBuilder
         candidates.forEach(candidate ->
         {
             Node classPop = popChain(f, candidate);
+            Node memberPop = memberPopFor(f, classPop);     // memoized: one MEMBER pop per class pop
             Node propPop = f.newPop(property.getName(), property, NodeTag.ASSOCIATION_CANDIDATE);
-            f.addEdge(classPop, propPop);
+            f.addEdge(memberPop, propPop);
         });
     }
 
@@ -256,50 +234,27 @@ public final class StackGraphBuilder
         });
     }
 
-    // Task 8 gap fix: runs once, after every file's definitions (and therefore every class's
-    // memberScope/classMemberScopes entry) are built, so a superclass declared later in source-registry
-    // iteration order than its subclass is still resolvable here. For each pending (subclass memberScope,
-    // superclass) pair, resolves the superclass's raw-type reference with THIS graph's own PathSearch —
-    // legitimate: it queries the stack graph we just built, never Pure's resolvedNode/resolvedProperty/
-    // resolvedEnum (the global constraint only forbids reading Pure's own resolved answer) — and, when
-    // exactly one target is found, links memberScope directly to the superclass's OWN memberScope (a
-    // SCOPE node, which never completes a search) — but ONLY if that memberScope lives in the SAME
-    // FileSubgraph as the subclass, since FileSubgraph.addEdge forbids a cross-file edge. This replaces
-    // the earlier design of linking memberScope to the head of a fresh NAME-reference push chain: that
-    // chain terminates at the superclass's OWN definition pop, which is also the direct target of
-    // ordinary name lookups — so an empty-stack class-name search that spuriously kept exploring past its
-    // own completion (PathSearch does not stop at a completion) could ride that chain to a second, wrong
-    // completion at the superclass (the bug this fix removes; see the memberScope/defNode comment above).
-    //
-    // KNOWN LIMITATION (a real behavior change from the pre-Task-8 design, flagged by code review and
-    // corrected here — do not repeat the earlier, inaccurate claim that this "matches the prior code's
-    // same-file-only behavior"): the OLD code's same-file check
-    // (`f.getFileId().equals(head.getFileId())`, where `head` was the entry of a freshly-built
-    // NAME-reference chain) was structurally ALWAYS true — buildElementReference always builds that chain
-    // in the REFERENCING file `f` (the subclass's own file), regardless of where the superclass is
-    // actually defined — so the old code always added its edge, and a CROSS-FILE superclass was still
-    // reached, at SEARCH time, via PathSearch's root-judgment teleportation into the superclass's own
-    // file followed by the (buggy, since-removed) defNode->memberScope edge landing in that file's own
-    // memberScope. That accidental cross-file reach rode the exact bug this fix removes, so it is gone
-    // now: cross-file inherited-member fallthrough via classMemberScopes is NOT currently supported.
-    // Reproducing it without reintroducing the false-completion bug would need a new mechanism (e.g. a
-    // dedicated, non-completable member-lookup entry point per class, itself reachable through
-    // root-judgment) that this spike does not implement — a named limitation for the Task 10 findings doc
-    // and Phase 1 design, not invented here. Pinned by
-    // TestBuilderProperties#testCrossFileInheritedPropertyIsKnownLimitation. Unmeasured by the
-    // platform-wide parity harness because PropertyStub has 0 reachable platform instances there (see
-    // Task 8 report) and the module's other PropertyStub/generalization fixtures are same-file.
-    private void linkGeneralizations()
+    // Wired immediately (no deferred pass, no same-file guard, no pending-generalization bookkeeping):
+    // pushes [superPath..., MEMBER] from memberScope, so a member lookup that reaches this class's
+    // memberScope without yet matching a locally-declared property re-enters the sentinel through the
+    // superclass's raw-type reference. The pushed MEMBER symbol is what lets that reference cross into
+    // the superclass's OWN MEMBER pop (wired by this same Class branch when the superclass is built,
+    // regardless of source-registry order — the edge is a PUSH chain resolved lazily at search time, not
+    // an eager same-file lookup, so build order across files never matters). Root judgment (every file
+    // root has a virtual edge to every other file root) carries the pushed stack into the superclass's
+    // file even when it differs from this class's file — restoring cross-file inherited-member lookup as
+    // a first-class case, not the known limitation the Phase 0 (classMemberScopes / linkGeneralizations)
+    // design left unresolved.
+    private void addGeneralizationEdges(FileSubgraph f, Node memberScope, CoreInstance element)
     {
         CoreInstance importStubClass = this.processorSupport.package_getByUserPath(M3Paths.ImportStub);
-        PathSearch search = new PathSearch(this.graph);
-        this.pendingGeneralizations.forEach(pending -> pending.element.getValueForMetaPropertyToMany(M3Properties.generalizations).forEach(generalization ->
+        element.getValueForMetaPropertyToMany(M3Properties.generalizations).forEach(generalization ->
         {
             CoreInstance genericType = generalization.getValueForMetaPropertyToOne(M3Properties.general);
             CoreInstance rawType = (genericType == null) ? null : genericType.getValueForMetaPropertyToOne(M3Properties.rawType);
             if ((rawType == null) || (rawType.getClassifier() != importStubClass))
             {
-                return; // e.g. implicit generalization to Any resolved at parse — no members to model
+                return; // implicit Any etc.
             }
             String superName = rawType.getValueForMetaPropertyToOne(M3Properties.idOrPath).getName();
             CoreInstance importGroup = rawType.getValueForMetaPropertyToOne(M3Properties.importGroup);
@@ -307,37 +262,28 @@ public final class StackGraphBuilder
             {
                 return;
             }
-            Node head = buildElementReference(importGroup, splitPath(superName), Lists.immutable.empty());
-            if (head == null)
+            // Push [superPath..., MEMBER]: the pending member rides the stack across files via
+            // root judgment; completion is possible only at property pops behind a MEMBER pop.
+            Node head = buildElementReference(importGroup, splitPath(superName), Lists.immutable.with(MEMBER));
+            if (head != null)
             {
-                return;
+                // head lives in the importGroup's file == this class's file (extends clause is local)
+                f.addEdge(memberScope, head);
             }
-            SearchResult result = search.resolve(head);
-            MutableSet<CoreInstance> targets = result.getResults().collect(PathResult::getDefinition, Sets.mutable.empty());
-            if (targets.size() != 1)
-            {
-                return; // structurally unresolved/ambiguous at the graph level — leave the fallthrough ungapped
-            }
-            Node superMemberScope = this.classMemberScopes.get(targets.getAny());
-            if ((superMemberScope != null) && pending.f.getFileId().equals(superMemberScope.getFileId()))
-            {
-                pending.f.addEdge(pending.memberScope, superMemberScope);
-            }
-        }));
+        });
     }
 
-    private static final class PendingGeneralization
+    // Memoized so the class's own gadget and any same-file association candidates that hit the same
+    // popChain node (classPop) share a single MEMBER pop — and therefore the same memberScope — rather
+    // than each carving out a separate, disconnected MEMBER pop off the same class pop.
+    private Node memberPopFor(FileSubgraph f, Node classPop)
     {
-        private final FileSubgraph f;
-        private final Node memberScope;
-        private final CoreInstance element;
-
-        private PendingGeneralization(FileSubgraph f, Node memberScope, CoreInstance element)
+        return this.memberPops.getIfAbsentPutWithKey(classPop, cp ->
         {
-            this.f = f;
-            this.memberScope = memberScope;
-            this.element = element;
-        }
+            Node pop = f.newPop(MEMBER);
+            f.addEdge(cp, pop);
+            return pop;
+        });
     }
 
     private void addMemberPop(FileSubgraph f, Node owner, String name, CoreInstance definition)
@@ -476,30 +422,23 @@ public final class StackGraphBuilder
         }
     }
 
-    // Empirical finding (Task 6): unlike ImportStub-typed raw-type positions, PropertyStub.owner is
-    // NOT left as an ImportStub. There is exactly one PropertyStub construction site in m3-core
-    // (AntlrContextToM3CoreInstance.java:3619, backing the treepath "+[a, b]" grammar that class/
-    // association projections use); it always passes owner=null at parse time, and
-    // RootRouteNodePostProcessor.resolvePropertyStub (treepath/RootRouteNodePostProcessor.java:295)
-    // always fills it in with the already-post-processed projected-from Class via
-    // _ownerCoreInstance(_class) before the PropertyStub itself is resolved. So this holds for every
-    // PropertyStub in the codebase, not just the fixture shape exercised by TestBuilderProperties: the
-    // builder locates that class's own member scope (recorded in classMemberScopes when the Class
-    // branch above ran) and pushes the property name straight onto it — a same-file push chain that
-    // still exercises the generalization push chain for properties declared on a superclass, exactly
-    // as the type-dependent lookup in the paper describes.
+    // Empirical finding (Task 6, still true under the sentinel): unlike ImportStub-typed raw-type
+    // positions, PropertyStub.owner is NOT left as an ImportStub. There is exactly one PropertyStub
+    // construction site in m3-core (AntlrContextToM3CoreInstance.java:3619, backing the treepath
+    // "+[a, b]" grammar that class/association projections use); it always passes owner=null at parse
+    // time, and RootRouteNodePostProcessor.resolvePropertyStub (treepath/RootRouteNodePostProcessor.java:295)
+    // always fills it in with the already-post-processed projected-from Class via _ownerCoreInstance(_class)
+    // before the PropertyStub itself is resolved. So this holds for every PropertyStub in the codebase,
+    // not just the fixture shape exercised by TestBuilderProperties: the owner Class is already known by
+    // identity, not by name+import lookup.
     //
-    // Consequence for the parity harness: because FileSubgraph.addEdge forbids cross-file edges, this
-    // push node lives in the OWNER CLASS's file subgraph, not the PropertyStub's own source file (they
-    // can differ, e.g. the projection here in use.pure referencing a property declared in defs.pure).
-    // Every other reference builder in this class (buildImportStubReference, buildEnumStubReference)
-    // instead builds its push chain in the *referencing* file and relies on PathSearch's root-judgment
-    // rule (every file root has a virtual edge to every other file root) to cross into the defining
-    // file. The PropertyStub category therefore never exercises that cross-file root-judgment path —
-    // it reaches the target member scope directly, in-file, because the owner class is already known
-    // by identity rather than by name+import lookup. Task 8's parity harness should treat "PropertyStub
-    // resolved via classMemberScopes" as a distinct, simpler category from the ImportStub/EnumStub
-    // root-judgment categories when comparing coverage.
+    // The chain is root-based, not identity-based: rather than reaching into the owner class's already-
+    // built memberScope node directly (the Phase 0 classMemberScopes shortcut, same-file only), this
+    // builds a fresh push chain [ownerPath..., MEMBER, propName] rooted at a file root and lets
+    // PathSearch's root-judgment rule (every file root has a virtual edge to every other file root) carry
+    // it into the owner class's own file to match its popChain and MEMBER pop — the same mechanism every
+    // other reference builder in this class (buildImportStubReference, buildEnumStubReference) already
+    // uses, restoring file-locality and cross-file reach for PropertyStub too.
     private void buildPropertyStubReference(CoreInstance stub)
     {
         CoreInstance owner = stub.getValueForMetaPropertyToOne(M3Properties.owner);
@@ -514,17 +453,22 @@ public final class StackGraphBuilder
             this.skipped.put(stub, "property-stub-owner-unresolved-import-stub");
             return;
         }
-        Node memberScope = (owner == null) ? null : this.classMemberScopes.get(owner);
-        if (memberScope == null)
+        if (owner == null)
         {
             this.skipped.put(stub, "property-stub-owner-without-member-scope");
             return;
         }
         String propertyName = stub.getValueForMetaPropertyToOne(M3Properties.propertyName).getName();
-        FileSubgraph f = fileFor(memberScope.getFileId());
-        Node push = f.newPush(propertyName);
-        f.addEdge(push, memberScope);
-        this.referenceNodes.put(stub, push);
+        String ownerPath = PackageableElement.getUserPathForPackageableElement(owner);
+        // Build in the owner's own file? No — the chain is root-based, so build it in the file
+        // that owns the stub if known, else the owner's file (both correct; root judgment links).
+        String fileId = (stub.getSourceInformation() != null)
+                ? stub.getSourceInformation().getSourceId()
+                : owner.getSourceInformation().getSourceId();
+        FileSubgraph f = fileFor(fileId);
+        MutableList<String> parts = splitPath(ownerPath).with(MEMBER).with(propertyName);
+        Node ref = pushChainToTarget(f, parts, f.getRoot());
+        this.referenceNodes.put(stub, ref);
     }
 
     /**
