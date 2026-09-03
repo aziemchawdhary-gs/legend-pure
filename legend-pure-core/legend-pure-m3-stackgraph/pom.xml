@@ -67,6 +67,61 @@
             <artifactId>junit</artifactId>
             <scope>test</scope>
         </dependency>
+
+        <!-- Task 10: DSL/store incremental corpus (shadow-corpus profile only). Main jars are needed at
+             test-runtime only (nothing in this module's own main sources references DSL classes; the
+             corpus's ShadowAttachingRunListener attaches purely reflectively) so all four are test-scoped;
+             the test-jars supply the org.finos.legend.pure.m2.**.incremental.Test*.java classes that
+             dependenciesToScan (below) scans. legend-pure-m2-dsl-mapping-grammar's test-jar is also needed
+             transitively by legend-pure-m2-store-relational-grammar's own incremental tests
+             (TestPureRuntimeClassMapping uses RelationalGraphWalker, which extends mapping's own
+             GraphWalker test fixture) — Maven's scope table does not propagate a test-scope dependency's
+             own test-scope dependencies, so it is declared here explicitly rather than relied on
+             transitively. -->
+        <dependency>
+            <groupId>org.finos.legend.pure</groupId>
+            <artifactId>legend-pure-m2-dsl-mapping-grammar</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.finos.legend.pure</groupId>
+            <artifactId>legend-pure-m2-dsl-mapping-grammar</artifactId>
+            <type>test-jar</type>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.finos.legend.pure</groupId>
+            <artifactId>legend-pure-m2-dsl-graph-grammar</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.finos.legend.pure</groupId>
+            <artifactId>legend-pure-m2-dsl-graph-grammar</artifactId>
+            <type>test-jar</type>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.finos.legend.pure</groupId>
+            <artifactId>legend-pure-m2-dsl-path-grammar</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.finos.legend.pure</groupId>
+            <artifactId>legend-pure-m2-dsl-path-grammar</artifactId>
+            <type>test-jar</type>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.finos.legend.pure</groupId>
+            <artifactId>legend-pure-m2-store-relational-grammar</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.finos.legend.pure</groupId>
+            <artifactId>legend-pure-m2-store-relational-grammar</artifactId>
+            <type>test-jar</type>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <build>
@@ -81,6 +136,17 @@
                             <!-- The dependency plugin analyzer raises these as false positives -->
                             <ignoredUnusedDeclaredDependencies>
                                 <dependency>org.finos.legend.pure:legend-pure-m3-core</dependency>
+                                <!-- Task 10: the four DSL/store test-jar deps (see main dependency block
+                                     above) are never referenced by a Java import in this module — they are
+                                     consumed purely via the shadow-corpus profile's surefire
+                                     dependenciesToScan/ShadowAttachingRunListener reflection, which the
+                                     analyzer's bytecode scan cannot see — plus each artifact is declared
+                                     twice (main jar + test-jar), the same main+test-jar duplicate-artifact
+                                     shape already ignored above for legend-pure-m3-core. -->
+                                <dependency>org.finos.legend.pure:legend-pure-m2-dsl-mapping-grammar</dependency>
+                                <dependency>org.finos.legend.pure:legend-pure-m2-dsl-graph-grammar</dependency>
+                                <dependency>org.finos.legend.pure:legend-pure-m2-dsl-path-grammar</dependency>
+                                <dependency>org.finos.legend.pure:legend-pure-m2-store-relational-grammar</dependency>
                             </ignoredUnusedDeclaredDependencies>
                             <!-- eclipse-collections must stay compile-scoped regardless of direct
                                  use: main sources need it transitively at javac time (see dependency
@@ -102,7 +168,36 @@
              which attaches an assert-mode StackGraphInvalidationShadow to each test class's PureRuntime as
              it runs. Each shadow's constructor does an eager full second-graph build (~45s), so this
              execution is slow (tens of minutes) by design — see the Task 9 report for measured wall-clock
-             and memory. -->
+             and memory.
+
+             Task 10 split this into FIVE per-module executions (was one execution scanning all five
+             dependenciesToScan entries together) after discovering a real cross-module classpath-pollution
+             bug: legend-pure-m2-dsl-graph-grammar's test-jar ships its own "platform_dsl_graph_test" Pure
+             resource repository (src/test/resources/platform_dsl_graph_test/graph_test.pure), which
+             declares meta::pure::graphFetch::test::Person. Maven gives every execution within one module's
+             test phase the SAME effective classpath (dependenciesToScan only selects which classes are
+             RUN as tests, not what's on the classpath) — so with all five test-jars declared as ordinary
+             test-scope dependencies above, graph's Person fixture was on the classpath for EVERY
+             execution, including relational's. PureRuntime auto-discovers every "platform_*"-prefixed
+             resource directory reachable on the classpath as its own compiled-in repository regardless of
+             dependenciesToScan/includes, so relational's tests silently gained a spurious "did you mean
+             meta::pure::graphFetch::test::Person" candidate in three unrelated "X has not been defined!"
+             error-message assertions (TestMapping#testMappingClassReference,
+             #testMappingClassReferenceError, TestPureRuntimeMapping#testDeleteModel,
+             TestPureRuntimeMappingStoreSubstitution#testDeleteModel — all four verified to pass 100% clean
+             when the same classes are run standalone via `mvn test -pl
+             legend-pure-m2-store-relational-grammar`, confirming the pollution is corpus-composition-only,
+             not a pre-existing bug in those tests). Each execution below now scopes its OWN
+             classpathDependencyExcludes to strip every DSL/store test-jar it does not need — restoring
+             each execution's classpath to what that module's tests actually require (m3-core's execution
+             is thereby restored to exactly its pre-Task-10 classpath) — rather than excluding those four
+             otherwise-valid, otherwise-passing test classes from the corpus. legend-pure-m2-dsl-mapping-
+             grammar's test-jar is deliberately KEPT on the relational execution's classpath: relational's
+             TestPureRuntimeClassMapping uses RelationalGraphWalker, which extends mapping's own test-only
+             GraphWalker class (see the main dependency block's comment above) — mapping ships no
+             "platform_*" test resource directory of its own (verified: `find
+             legend-pure-m2-dsl-mapping-grammar/src/test/resources` finds nothing), so keeping it does not
+             reintroduce the pollution. -->
         <profile>
             <id>shadow-corpus</id>
             <build>
@@ -112,7 +207,7 @@
                         <artifactId>maven-surefire-plugin</artifactId>
                         <executions>
                             <execution>
-                                <id>shadow-incremental-corpus</id>
+                                <id>shadow-incremental-corpus-m3core</id>
                                 <phase>test</phase>
                                 <goals>
                                     <goal>test</goal>
@@ -121,6 +216,29 @@
                                     <dependenciesToScan>
                                         <dependency>org.finos.legend.pure:legend-pure-m3-core</dependency>
                                     </dependenciesToScan>
+                                    <!-- Excludes every DSL/store artifact AND their transitive-only
+                                         "-pure"/precisePrimitives platform modules (see the profile-level
+                                         comment above): `classpathDependencyExcludes` filters the already-
+                                         resolved flat classpath by groupId:artifactId, it does not
+                                         re-resolve the dependency graph, so an artifact pulled in only
+                                         transitively by an excluded one (e.g. legend-pure-m3-
+                                         precisePrimitives, pulled in solely by legend-pure-m2-store-
+                                         relational-grammar) stays on the classpath unless named here too.
+                                         Full transitive set verified via `mvn dependency:tree
+                                         -Dscope=test`. -->
+                                    <classpathDependencyExcludes>
+                                        <classpathDependencyExclude>org.finos.legend.pure:legend-pure-m2-dsl-mapping-grammar</classpathDependencyExclude>
+                                        <classpathDependencyExclude>org.finos.legend.pure:legend-pure-m2-dsl-store-pure</classpathDependencyExclude>
+                                        <classpathDependencyExclude>org.finos.legend.pure:legend-pure-m2-dsl-mapping-pure</classpathDependencyExclude>
+                                        <classpathDependencyExclude>org.finos.legend.pure:legend-pure-m2-dsl-graph-grammar</classpathDependencyExclude>
+                                        <classpathDependencyExclude>org.finos.legend.pure:legend-pure-m2-dsl-graph-pure</classpathDependencyExclude>
+                                        <classpathDependencyExclude>org.finos.legend.pure:legend-pure-m2-dsl-path-grammar</classpathDependencyExclude>
+                                        <classpathDependencyExclude>org.finos.legend.pure:legend-pure-m2-dsl-path-pure</classpathDependencyExclude>
+                                        <classpathDependencyExclude>org.finos.legend.pure:legend-pure-m2-store-relational-grammar</classpathDependencyExclude>
+                                        <classpathDependencyExclude>org.finos.legend.pure:legend-pure-m3-precisePrimitives</classpathDependencyExclude>
+                                        <classpathDependencyExclude>org.finos.legend.pure:legend-pure-m2-dsl-store-grammar</classpathDependencyExclude>
+                                        <classpathDependencyExclude>org.finos.legend.pure:legend-pure-m2-store-relational-pure</classpathDependencyExclude>
+                                    </classpathDependencyExcludes>
                                     <includes>
                                         <include>**/incremental/**/Test*.java</include>
                                     </includes>
@@ -146,6 +264,162 @@
                                         <exclude>**/TestPureRuntimeProjection.java</exclude>
                                         <exclude>**/TestPureRuntimeTreePath.java</exclude>
                                     </excludes>
+                                    <properties>
+                                        <property>
+                                            <name>listener</name>
+                                            <value>org.finos.legend.pure.m3.stackgraph.invalidation.ShadowAttachingRunListener</value>
+                                        </property>
+                                    </properties>
+                                </configuration>
+                            </execution>
+                            <execution>
+                                <id>shadow-incremental-corpus-mapping</id>
+                                <phase>test</phase>
+                                <goals>
+                                    <goal>test</goal>
+                                </goals>
+                                <configuration>
+                                    <dependenciesToScan>
+                                        <dependency>org.finos.legend.pure:legend-pure-m2-dsl-mapping-grammar</dependency>
+                                    </dependenciesToScan>
+                                    <!-- Keeps legend-pure-m2-dsl-mapping-grammar plus its own transitive
+                                         legend-pure-m2-dsl-store-pure/legend-pure-m2-dsl-mapping-pure
+                                         (needed for mapping's own tests to compile ###Mapping sources at
+                                         all); excludes the other three modules and everything ONLY they
+                                         transitively pull in — see the m3core execution's comment above. -->
+                                    <classpathDependencyExcludes>
+                                        <classpathDependencyExclude>org.finos.legend.pure:legend-pure-m2-dsl-graph-grammar</classpathDependencyExclude>
+                                        <classpathDependencyExclude>org.finos.legend.pure:legend-pure-m2-dsl-graph-pure</classpathDependencyExclude>
+                                        <classpathDependencyExclude>org.finos.legend.pure:legend-pure-m2-dsl-path-grammar</classpathDependencyExclude>
+                                        <classpathDependencyExclude>org.finos.legend.pure:legend-pure-m2-dsl-path-pure</classpathDependencyExclude>
+                                        <classpathDependencyExclude>org.finos.legend.pure:legend-pure-m2-store-relational-grammar</classpathDependencyExclude>
+                                        <classpathDependencyExclude>org.finos.legend.pure:legend-pure-m3-precisePrimitives</classpathDependencyExclude>
+                                        <classpathDependencyExclude>org.finos.legend.pure:legend-pure-m2-dsl-store-grammar</classpathDependencyExclude>
+                                        <classpathDependencyExclude>org.finos.legend.pure:legend-pure-m2-store-relational-pure</classpathDependencyExclude>
+                                    </classpathDependencyExcludes>
+                                    <includes>
+                                        <include>**/incremental/**/Test*.java</include>
+                                    </includes>
+                                    <!-- Task 10: see src/test/resources/shadow-corpus-exclusions.tsv for
+                                         cause-tag + justification. -->
+                                    <excludes>
+                                        <exclude>**/TestPureRuntimeAggregationAwareMapping.java</exclude>
+                                        <exclude>**/TestPureModelMapping.java</exclude>
+                                    </excludes>
+                                    <properties>
+                                        <property>
+                                            <name>listener</name>
+                                            <value>org.finos.legend.pure.m3.stackgraph.invalidation.ShadowAttachingRunListener</value>
+                                        </property>
+                                    </properties>
+                                </configuration>
+                            </execution>
+                            <execution>
+                                <id>shadow-incremental-corpus-graph</id>
+                                <phase>test</phase>
+                                <goals>
+                                    <goal>test</goal>
+                                </goals>
+                                <configuration>
+                                    <dependenciesToScan>
+                                        <dependency>org.finos.legend.pure:legend-pure-m2-dsl-graph-grammar</dependency>
+                                    </dependenciesToScan>
+                                    <!-- Keeps only legend-pure-m2-dsl-graph-grammar plus its own
+                                         transitive legend-pure-m2-dsl-graph-pure; excludes the other three
+                                         modules and everything ONLY they transitively pull in — see the
+                                         m3core execution's comment above. -->
+                                    <classpathDependencyExcludes>
+                                        <classpathDependencyExclude>org.finos.legend.pure:legend-pure-m2-dsl-mapping-grammar</classpathDependencyExclude>
+                                        <classpathDependencyExclude>org.finos.legend.pure:legend-pure-m2-dsl-store-pure</classpathDependencyExclude>
+                                        <classpathDependencyExclude>org.finos.legend.pure:legend-pure-m2-dsl-mapping-pure</classpathDependencyExclude>
+                                        <classpathDependencyExclude>org.finos.legend.pure:legend-pure-m2-dsl-path-grammar</classpathDependencyExclude>
+                                        <classpathDependencyExclude>org.finos.legend.pure:legend-pure-m2-dsl-path-pure</classpathDependencyExclude>
+                                        <classpathDependencyExclude>org.finos.legend.pure:legend-pure-m2-store-relational-grammar</classpathDependencyExclude>
+                                        <classpathDependencyExclude>org.finos.legend.pure:legend-pure-m3-precisePrimitives</classpathDependencyExclude>
+                                        <classpathDependencyExclude>org.finos.legend.pure:legend-pure-m2-dsl-store-grammar</classpathDependencyExclude>
+                                        <classpathDependencyExclude>org.finos.legend.pure:legend-pure-m2-store-relational-pure</classpathDependencyExclude>
+                                    </classpathDependencyExcludes>
+                                    <includes>
+                                        <include>**/incremental/**/Test*.java</include>
+                                    </includes>
+                                    <properties>
+                                        <property>
+                                            <name>listener</name>
+                                            <value>org.finos.legend.pure.m3.stackgraph.invalidation.ShadowAttachingRunListener</value>
+                                        </property>
+                                    </properties>
+                                </configuration>
+                            </execution>
+                            <execution>
+                                <id>shadow-incremental-corpus-path</id>
+                                <phase>test</phase>
+                                <goals>
+                                    <goal>test</goal>
+                                </goals>
+                                <configuration>
+                                    <dependenciesToScan>
+                                        <dependency>org.finos.legend.pure:legend-pure-m2-dsl-path-grammar</dependency>
+                                    </dependenciesToScan>
+                                    <!-- Keeps only legend-pure-m2-dsl-path-grammar plus its own
+                                         transitive legend-pure-m2-dsl-path-pure; excludes the other three
+                                         modules and everything ONLY they transitively pull in — see the
+                                         m3core execution's comment above. -->
+                                    <classpathDependencyExcludes>
+                                        <classpathDependencyExclude>org.finos.legend.pure:legend-pure-m2-dsl-mapping-grammar</classpathDependencyExclude>
+                                        <classpathDependencyExclude>org.finos.legend.pure:legend-pure-m2-dsl-store-pure</classpathDependencyExclude>
+                                        <classpathDependencyExclude>org.finos.legend.pure:legend-pure-m2-dsl-mapping-pure</classpathDependencyExclude>
+                                        <classpathDependencyExclude>org.finos.legend.pure:legend-pure-m2-dsl-graph-grammar</classpathDependencyExclude>
+                                        <classpathDependencyExclude>org.finos.legend.pure:legend-pure-m2-dsl-graph-pure</classpathDependencyExclude>
+                                        <classpathDependencyExclude>org.finos.legend.pure:legend-pure-m2-store-relational-grammar</classpathDependencyExclude>
+                                        <classpathDependencyExclude>org.finos.legend.pure:legend-pure-m3-precisePrimitives</classpathDependencyExclude>
+                                        <classpathDependencyExclude>org.finos.legend.pure:legend-pure-m2-dsl-store-grammar</classpathDependencyExclude>
+                                        <classpathDependencyExclude>org.finos.legend.pure:legend-pure-m2-store-relational-pure</classpathDependencyExclude>
+                                    </classpathDependencyExcludes>
+                                    <includes>
+                                        <include>**/incremental/**/Test*.java</include>
+                                    </includes>
+                                    <!-- Task 10: see src/test/resources/shadow-corpus-exclusions.tsv for
+                                         cause-tag + justification. -->
+                                    <excludes>
+                                        <exclude>**/TestPureRuntimePath.java</exclude>
+                                    </excludes>
+                                    <properties>
+                                        <property>
+                                            <name>listener</name>
+                                            <value>org.finos.legend.pure.m3.stackgraph.invalidation.ShadowAttachingRunListener</value>
+                                        </property>
+                                    </properties>
+                                </configuration>
+                            </execution>
+                            <execution>
+                                <id>shadow-incremental-corpus-relational</id>
+                                <phase>test</phase>
+                                <goals>
+                                    <goal>test</goal>
+                                </goals>
+                                <configuration>
+                                    <dependenciesToScan>
+                                        <dependency>org.finos.legend.pure:legend-pure-m2-store-relational-grammar</dependency>
+                                    </dependenciesToScan>
+                                    <!-- Keeps legend-pure-m2-dsl-mapping-grammar (+ its own transitive
+                                         legend-pure-m2-dsl-store-pure/legend-pure-m2-dsl-mapping-pure):
+                                         needed both for RelationalGraphWalker (extends mapping's test-only
+                                         GraphWalker — see the main dependency block's comment) and for
+                                         relational's own tests to compile ###Mapping sections. Also keeps
+                                         relational's own transitive legend-pure-m3-precisePrimitives/
+                                         legend-pure-m2-dsl-store-grammar/legend-pure-m2-store-relational-
+                                         pure. Excludes only graph/path and what they alone pull in — see
+                                         the m3core execution's comment above for why this can't just be
+                                         "exclude graph-grammar, path-grammar" the way it looks. -->
+                                    <classpathDependencyExcludes>
+                                        <classpathDependencyExclude>org.finos.legend.pure:legend-pure-m2-dsl-graph-grammar</classpathDependencyExclude>
+                                        <classpathDependencyExclude>org.finos.legend.pure:legend-pure-m2-dsl-graph-pure</classpathDependencyExclude>
+                                        <classpathDependencyExclude>org.finos.legend.pure:legend-pure-m2-dsl-path-grammar</classpathDependencyExclude>
+                                        <classpathDependencyExclude>org.finos.legend.pure:legend-pure-m2-dsl-path-pure</classpathDependencyExclude>
+                                    </classpathDependencyExcludes>
+                                    <includes>
+                                        <include>**/incremental/**/Test*.java</include>
+                                    </includes>
                                     <properties>
                                         <property>
                                             <name>listener</name>
