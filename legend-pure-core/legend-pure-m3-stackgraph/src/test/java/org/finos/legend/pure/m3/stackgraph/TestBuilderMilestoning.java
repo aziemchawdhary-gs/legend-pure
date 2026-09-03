@@ -65,7 +65,7 @@ public class TestBuilderMilestoning extends AbstractPureTestWithCoreCompiled
     @Test
     public void testSynthesizedEdgePointPropertyBehaviorIsPinned()
     {
-        // EMPIRICAL — pins the NEVER-MOVED case (NOT Gap 5; see testMovedMilestonedPropertyIsNotFound
+        // EMPIRICAL — pins the NEVER-MOVED case (NOT Gap 5; see testMovedMilestonedPropertyIsAmbiguous
         // below for the actual Gap-5 measurement). MilestoningPropertyProcessor only moves/renames a
         // property when its OWN return type is itself temporal (getSynthesizedMilestonedProperties keys
         // off the property's returnType stereotypes, not the owning class's). tprop2 : String[1] has a

@@ -14,7 +14,7 @@ below are measured, taken directly from Tasks 7–11's task reports and re-verif
 |---|---|---|---|---|
 | 1 | Zero unexplained `SHADOW_MISSING` | 0 across corpus | **PASS** (covered-construct corpus + scripted edits) | 0 unexplained across 97+74+15+3 = 189 harness tests and all 3 scripted-edit seeds (post-fix) |
 | 2 | `SHADOW_EXTRA` ≤ 5% or categorized | ≤0.05, or named cause | **FAIL**, honest | ~0.62 measured (was ~0.95 pre-fix); categorized (full-transitive-closure over-approximation), not silently tuned |
-| 3 | Allowlist end-state: every category has a written disposition + count | all categories dispositioned | **PASS** (as a reporting gate) | 2 files, 3 + 15 + 18 = 36 total rows/categories, all dispositioned (`accept` / `phase2-model` / `harness-limitation`) — see §3 |
+| 3 | Allowlist end-state: every category has a written disposition + count | all categories dispositioned | **PASS** (dispositioned; counts recorded where measured) | 2 files, 3 + 14 + 18 = 35 total rows/categories, all dispositioned (`accept` / `phase2-model` / `harness-limitation`) — see §3 |
 | 4 | Shadow overhead ≤ 25% wall-clock | ≤25% | **FAIL**, honest | ~5100–16200% per-cycle (was ~4600–5100% pre-Part-A-fix, worsened by JIT-warmup variance, not regression); root cause pinned to one unscoped method | 
 | 5 | Closing deliverable: findings report + promotion plan | delivered | **PASS** | this document |
 
@@ -87,13 +87,19 @@ Two files, two families — never conflated (each row explicitly typed):
 
 ### 3.1 `divergence-allowlist.tsv` (element-level, checked into `src/main/resources`)
 
-| Category | Match kind | Pattern | Disposition | Count in corpus |
+| Category | Match kind | Pattern | Disposition | Why (no corpus count measured) |
 |---|---|---|---|---|
 | `grammar-info-stub` | classifier | `GrammarInfoStub` | `phase2-model` | DSL-parser-filled stubs, unmodeled per spec §6.3 |
 | `no-owning-element` | classifier | `*unowned*` | `accept` | import groups / top-levels, permanent |
 | `deleted-element` | classifier | `*deleted*` | `accept` | elements removed this cycle, permanent |
 
-3 rows, all with a written disposition. No new rows were added during Tasks 9–11 despite dozens of
+3 rows, all with a written disposition. No task report records a numeric corpus-match count for
+any of these three categories against the real corpus run (the only numeric figure anywhere in
+the task reports — Task 6's `"grammar-info-stub: 1"` — is a unit-test assertion on the report
+printer's formatting, not a corpus measurement), so this table's last column states the written
+rationale rather than a fabricated count; gate 3 is read accordingly as "dispositioned; counts
+recorded where measured" (§1), not as "every category carries a corpus count". No new rows were
+added during Tasks 9–11 despite dozens of
 newly-observed divergences — the allowlist's two-axis (classifier / path-prefix) matching cannot
 safely express "this whole reference kind is unmodeled" without risking silently swallowing a
 genuine future regression on ordinary user code (`A`, `B`, `test`, …). That itself is a Task 9
@@ -102,17 +108,17 @@ exclusion-file mechanism (below) is the workaround that was needed instead.
 
 ### 3.2 `shadow-corpus-exclusions.tsv` (test-class-level, checked into `src/test/resources`)
 
-**Family A — `unmodeled-refkind:*` (Phase 2 workload sizing).** 15 test classes, all `phase2-model`:
+**Family A — `unmodeled-refkind:*` (Phase 2 workload sizing).** 14 test classes, all `phase2-model`:
 
 | Sub-tag | Classes hit | What's unmodeled |
 |---|---|---|
 | `constraint` | 2 (`TestPureRuntimeClass_Constraints`, `TestPureRuntimeFunction_Constraint`) | Class/function constraint bodies (`[$this.x == f()]`) reference functions via `FunctionExpression`, never a stub |
 | `function-application` | 4 (`TestPureRuntimeClass_FunctionParamType`, `TestPureRuntimeFunction_All`, `TestPureRuntimeTreePath`, `TestPureRuntimeAggregationAwareMapping`) | Ordinary function-call sites (including tree-path derived properties and mapping aggregation-aware transforms) create `FunctionExpression` call edges, never a stub |
-| `association-property` | 6 (`TestPureRuntimeAssociation`, `_AsPointer`, `_UseProperty`, `TestMilestoning`, `TestPureRuntimeProjection`) | Properties an `Association` contributes to a class (`propertiesFromAssociations`) are never linked back to that Association — compounded by the repo's own builder-read-discipline exclusion of back-reference properties |
+| `association-property` | 5 (`TestPureRuntimeAssociation`, `_AsPointer`, `_UseProperty`, `TestMilestoning`, `TestPureRuntimeProjection`) | Properties an `Association` contributes to a class (`propertiesFromAssociations`) are never linked back to that Association — compounded by the repo's own builder-read-discipline exclusion of back-reference properties |
 | `stereotype-application` | 1 (`TestPureRuntimeStereotype`) | `<<Profile.stereotype>>` applications are a distinct M3 reference mechanism, neither a stub kind nor `GrammarInfoStub` |
 | `mapping-property-transform` | 1 (`TestPureModelMapping`) | Mapping `PropertyMapping` transform value specifications are never scanned (`Mapping` elements aren't in `StackGraphBuilder`'s Phase 1 scope at all) |
 | `path-route-node` | 1 (`TestPureRuntimePath`) | Path DSL literal (`#/A/b/bAttr#`) route-node resolution is a distinct grammar mechanism, never scanned |
-| **Total** | **15 classes** (11 m3-core + 4 DSL) | 6 sub-categories — this is the actual, measured Phase 2 modeling workload: 6 named constructs `StackGraphBuilder` must learn to model, not a vague "some things are missing" |
+| **Total** | **14 classes** (11 m3-core + 3 DSL) | 6 sub-categories — this is the actual, measured Phase 2 modeling workload: 6 named constructs `StackGraphBuilder` must learn to model, not a vague "some things are missing" |
 
 **Family B — `harness-limitation:per-method-runtime-lifecycle` (not a construct gap).** 18 relational
 test classes, all `harness-limitation` (never `phase2-model` — no model support would close this;
@@ -140,9 +146,11 @@ lifecycle, no listener) covering a Database structural edit, the delete/restore-
 idiom, and a mapped-Class edit — all 3 green, zero unexplained `SHADOW_MISSING`, no new
 `unmodeled-refkind` needed.
 
-**Total exclusion-file rows: 33** (15 `unmodeled-refkind:*` + 18 `harness-limitation:*`), plus the
-3 `divergence-allowlist.tsv` element-level categories — **36 total dispositioned categories/rows**,
-satisfying gate 3 as a reporting requirement even though gate 2's numeric threshold is not met.
+**Total exclusion-file rows: 32** (14 `unmodeled-refkind:*` + 18 `harness-limitation:*`, matching
+the 32 `<exclude>` entries in `legend-pure-m3-stackgraph/pom.xml`'s `shadow-corpus` profile 1:1),
+plus the 3 `divergence-allowlist.tsv` element-level categories — **35 total dispositioned
+categories/rows**, satisfying gate 3 as a reporting requirement even though gate 2's numeric
+threshold is not met.
 
 ---
 
@@ -346,6 +354,16 @@ MutableSet<CoreInstance> toUnbindGenerated = this.walkTheGraphForUnload(oldButNo
 the *potential*-to-process set before any repo compilation begins; both call sites would need the
 authoritative-mode substitution, not just the per-repo one.)
 
+A third call site exists at line 349, inside `unload()`:
+
+```java
+MutableSet<CoreInstance> toUnbindGeneratedFromRemovedSources = this.walkTheGraphForUnload(instancesInRemovedSources);
+```
+
+This one covers the removed-sources path — the delete idiom this phase's own amendments (§4,
+bugs #1, #2, #4) centered on — and would need the same substitution as the other two for an
+authoritative mode to be sound across delete/restore cycles, not just ordinary edits.
+
 An authoritative-mode flag would replace this call, for the flagged repos, with:
 
 ```java
@@ -460,4 +478,8 @@ relational coverage becomes a priority.
 ## 9. Verification (this task)
 
 - `source /home/aziem/bin/jdk11.sh && mvn verify -pl legend-pure-core/legend-pure-m3-stackgraph -DfailIfNoTests=false` → **BUILD SUCCESS** (default suite, no `-Pshadow-corpus` — the corpus profile was proven green in Tasks 9–10 and re-confirmed in Task 11's fix round; not re-run here per this task's own instruction to avoid the ~57 min corpus run absent a regression signal).
-- `git status` / `git diff --stat 4dad44db5..HEAD` — clean; only `legend-pure-core/legend-pure-m3-stackgraph/**` and `docs/**` touched across the whole branch since `4dad44db5`, confirming the module boundary and Task 10's "no DSL pom touch" claim held for the entire Phase 1 effort (45 files changed, 5790 insertions / 203 deletions, entirely within the module + its checked-in TSVs + this doc pair).
+- `git status` / `git diff --stat 4dad44db5..HEAD` — clean; only `legend-pure-core/legend-pure-m3-stackgraph/**` and `docs/**` touched across the whole branch since `4dad44db5`, confirming the module boundary and Task 10's "no DSL pom touch" claim held for the entire Phase 1 effort. Recomputed after this final-review fix commit ("stackgraph(p1): final review fixes — findings
+arithmetic, third unload call site, exclusions sync test", which adds
+`TestShadowCorpusExclusionsSync` and corrects this document's own §1/§2.2/§3.2 arithmetic and
+§8.2's call-site list): **48 files changed, 6496 insertions(+), 204 deletions(-)**, including this
+fix commit; approximate, entirely within the module + its checked-in TSVs + this doc pair.
