@@ -1,7 +1,7 @@
 # Stack Graphs Phase 1 — Shadow Invalidation Index: Design
 
 **Date:** 2026-09-01
-**Status:** Draft — awaiting review
+**Status:** Executed — see 2026-09-01-stackgraphs-phase1-findings.md
 **Context:** Phase 0 (see `2026-08-31-stackgraphs-phase0-parity-spike-design.md` and
 `2026-08-31-stackgraphs-phase0-findings.md`) proved resolution parity for the stack-graph
 model on platform sources (99.921% ImportStub match, 0 mismatches) and recommended GO with
