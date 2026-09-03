@@ -448,7 +448,7 @@ be preserved as long as possible.
 Model or accept-with-workaround each of the 6 named `unmodeled-refkind` sub-categories, in
 roughly ascending order of estimated effort based on what's already measured:
 
-1. **`association-property`** (6 of 15 excluded classes — the largest single sub-category).
+1. **`association-property`** (5 of 14 excluded classes — the largest single sub-category).
    `StackGraphBuilder` needs to model `propertiesFromAssociations` contributions, mirroring the
    `associationContributionTargets` invalidation-seeding mechanism Task 11 Part A already built
    for the *incremental* side — the builder-side modeling is the missing half.
