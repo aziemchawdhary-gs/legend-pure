@@ -17,10 +17,14 @@ package org.finos.legend.pure.m3.stackgraph.invalidation;
 import org.eclipse.collections.api.factory.Lists;
 import org.eclipse.collections.api.factory.Maps;
 import org.eclipse.collections.api.factory.Sets;
+import org.eclipse.collections.api.list.ListIterable;
 import org.eclipse.collections.api.list.MutableList;
 import org.eclipse.collections.api.map.MutableMap;
 import org.eclipse.collections.api.set.MutableSet;
 import org.eclipse.collections.api.set.SetIterable;
+import org.finos.legend.pure.m3.navigation.Instance;
+import org.finos.legend.pure.m3.navigation.M3Paths;
+import org.finos.legend.pure.m3.navigation.M3Properties;
 import org.finos.legend.pure.m3.navigation.PackageableElement.PackageableElement;
 import org.finos.legend.pure.m3.navigation.ProcessorSupport;
 import org.finos.legend.pure.m3.serialization.runtime.Source;
@@ -187,6 +191,32 @@ import org.finos.legend.pure.m4.coreinstance.SourceInformation;
  * this shadow's very first {@link #buildFull}) is still never retried unless something else adds it to
  * {@link #unresolvedStubs} first — an accepted residual asymmetry, matching {@link ResolutionCache}'s own
  * pre-existing "unresolved"/"ambiguous" indexing gap.</p>
+ *
+ * <h2>Association-contributed-property invalidation (Task 11 Part A fix)</h2>
+ * <p>An {@code Association}'s two declared properties each own an ordinarily-modeled, ordinarily-resolved
+ * raw-type stub — e.g. {@code toB : B[1]} resolves an edge "this association depends on B" — but M3's own
+ * association processing additionally attaches each property <em>reciprocally onto the class named by the
+ * other property's type</em> (e.g. {@code toB} is attached onto {@code A}, the type of the association's
+ * other property {@code toA}), so {@code A}'s own structural shape depends on the association even though
+ * {@code A}'s own declared code never names the association anywhere — no ordinary stub-resolution edge
+ * captures this, since nothing in {@code A}'s file ever resolves a reference to it. Before this fix,
+ * {@link #computeInvalidation} had no edge at all representing this dependency, so editing/deleting an
+ * association never invalidated the classes it contributes properties to (a real {@code SHADOW_MISSING}
+ * under-approximation — found by Task 11's scripted-edit corpus, and initially masked, on a shadow's very
+ * first post-{@link #buildFull} cycle only, by {@link #buildFull}'s own then-unconsumed everything-changed
+ * pending set — see that method's own fix note — which is why the gap only ever surfaced once at least one
+ * prior, unrelated, already-consumed touched cycle had already run first).</p>
+ * <p>{@link #associationContributionTargets} derives a two-property association's contributed-to classes
+ * without any new resolution machinery: for a two-element association, the <em>unordered pair</em> of its
+ * two properties' already-resolved raw-type targets <em>is</em> the pair of classes contributed to (see
+ * that method's own javadoc for why the P/otherP mapping needs no separate bookkeeping). Two passes fold
+ * these targets into this cycle's {@code forcedInvalidations} (reusing the existing accumulate-until-
+ * consumed {@link #pendingForcedInvalidations} plumbing rather than adding a new seed mechanism): one for
+ * every touched file's <em>old</em> (pre-rebuild) elements — queried before the "drop stale entries" step
+ * removes their still-valid property-stub entries, covering an association file that was edited or removed
+ * — and one for every added/changed file's <em>new</em> (post-rebuild) elements, queried after this cycle's
+ * fresh entries are merged in, covering an association file that was just added or whose own edit changed
+ * which classes it resolves against.</p>
  */
 public final class IncrementalStackGraph
 {
@@ -235,6 +265,23 @@ public final class IncrementalStackGraph
     {
         IncrementalStackGraph shadow = new IncrementalStackGraph(repository, processorSupport);
         shadow.applySourceChanges(registry);
+        // Fix (Task 11 Part A/B): this initial applySourceChanges call diffs against empty prior state, so
+        // EVERY file in registry looks "added" and lands in pendingChangedFiles (see "Accumulate-until-
+        // consumed diffs" javadoc) — this is the baseline being established, not a real edit a caller
+        // should ever see as "what changed". Left unconsumed, a caller's first real getLastChangedFiles()/
+        // computeInvalidation() call after construction would silently include the ENTIRE registry as
+        // seeds (previousElements/elementsByFile for literally every file), producing a wildly over-broad
+        // first-cycle answer with no relationship to that cycle's actual edit — this was previously masked
+        // in this module's own tests only because every one of them manually calls consumeChangedFiles()
+        // immediately after buildFull() (see TestIncrementalStackGraph#setUp()'s own comment to that
+        // effect), but StackGraphInvalidationShadow's constructor (the only non-test caller) never did,
+        // so its first real compile cycle after construction always over-invalidated the whole platform —
+        // a leading contributor to the Task 11 scripted-edit runs' measured ~95% extraRatio. Consuming here
+        // makes "freshly built, nothing pending" the caller-visible postcondition of buildFull() itself,
+        // matching what every caller actually wants; the (now redundant, still harmless) explicit
+        // consumeChangedFiles() calls in existing tests are unaffected since consuming an already-empty
+        // pending set is a no-op.
+        shadow.consumeChangedFiles();
         return shadow;
     }
 
@@ -357,6 +404,13 @@ public final class IncrementalStackGraph
                 stubsToCompute.add(stub);
             }
         });
+        // Association-contributed-property invalidation (see class javadoc, "Association-contributed-
+        // property invalidation"): the OLD (pre-rebuild) version of every touched file's elements, for
+        // whichever of them was itself an Association — queried against entriesByStub BEFORE the drop
+        // step below removes its (still currently valid) property-type-stub entries.
+        touched.forEach(fileId ->
+                this.priorElementsByFile.getIfAbsentValue(fileId, Sets.mutable.empty()).forEach(oldElement ->
+                        forcedInvalidations.addAllIterable(associationContributionTargets(oldElement))));
 
         // Drop stale entries: anything owned by a touched file (dead, if that file was reparsed or
         // removed) and anything about to be recomputed (avoid a stale/fresh duplicate).
@@ -396,6 +450,13 @@ public final class IncrementalStackGraph
                 this.unresolvedStubs.add(stub);
             }
         });
+        // Association-contributed-property invalidation, second half: the NEW (post-rebuild) version of
+        // every added/changed touched file's elements, now that entriesByStub holds this cycle's freshly
+        // (re)computed entries (needed when the Association's own file — not just an unrelated file whose
+        // change happened to re-resolve its property-type stubs — is itself the one just added/edited).
+        addedOrChanged.forEach(fileId ->
+                this.elementsByFile.getIfAbsentValue(fileId, Sets.mutable.empty()).forEach(newElement ->
+                        forcedInvalidations.addAllIterable(associationContributionTargets(newElement))));
 
         // Rebuild the target-file side map and the inverted index from the (now up to date) cache — both
         // cheap map passes, not PathSearch, so this stays proportional to live entry count, not program
@@ -516,6 +577,45 @@ public final class IncrementalStackGraph
             }
         });
         return result;
+    }
+
+    /**
+     * For {@code element}, if it is a two-property {@code Association}, the set of classes it
+     * structurally contributes properties to (Task 11 Part A fix — see class javadoc,
+     * "Association-contributed-property invalidation"): the resolved targets of its two declared
+     * properties' raw-type stubs, read from {@link #entriesByStub}. Each property's raw-type {@code
+     * ImportStub} is already an ordinarily-modeled, ordinarily-resolved stub owned by the association
+     * (see {@code StackGraphBuilder#addAssociationContribution}); for a two-property association the
+     * <em>unordered pair</em> of resolved property-raw-types is exactly the pair of classes that receive
+     * a contributed property — property P's declared type names the class that receives <em>the other</em>
+     * property, but since there are exactly two properties, the two-element set of "declared types" and
+     * the two-element set of "classes contributed to" are one and the same set either way, so this needs
+     * no separate P/otherP bookkeeping. Returns an empty set if {@code element} is not a two-property
+     * Association, or if a property's raw-type stub has no current (or not-yet-computed) MATCHED entry.
+     */
+    private MutableSet<CoreInstance> associationContributionTargets(CoreInstance element)
+    {
+        if (!Instance.instanceOf(element, M3Paths.Association, this.processorSupport))
+        {
+            return Sets.mutable.empty();
+        }
+        ListIterable<? extends CoreInstance> properties = element.getValueForMetaPropertyToMany(M3Properties.properties);
+        if (properties.size() != 2)
+        {
+            return Sets.mutable.empty();
+        }
+        MutableSet<CoreInstance> targets = Sets.mutable.empty();
+        properties.forEach(property ->
+        {
+            CoreInstance genericType = property.getValueForMetaPropertyToOne(M3Properties.genericType);
+            CoreInstance rawTypeStub = (genericType == null) ? null : genericType.getValueForMetaPropertyToOne(M3Properties.rawType);
+            ResolutionCache.Entry entry = (rawTypeStub == null) ? null : this.entriesByStub.get(rawTypeStub);
+            if ((entry != null) && entry.isMatched() && (entry.getTargetElement() != null))
+            {
+                targets.add(entry.getTargetElement());
+            }
+        });
+        return targets;
     }
 
     private static String fileIdOf(CoreInstance element)

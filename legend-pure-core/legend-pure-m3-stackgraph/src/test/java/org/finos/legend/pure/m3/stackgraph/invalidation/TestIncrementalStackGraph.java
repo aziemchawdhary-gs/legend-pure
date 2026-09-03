@@ -92,7 +92,8 @@ public class TestIncrementalStackGraph extends AbstractPureTestWithCoreCompiled
     public void cleanRuntime()
     {
         for (String id : new String[] {"a.pure", "b.pure", "delpure.pure", "ccfi_t.pure", "ccfi_m.pure", "ccfi_l.pure",
-                "rmtgt_t.pure", "rmtgt_m.pure", "acc.pure", "retry_t.pure", "retry_m.pure", "identity.pure"})
+                "rmtgt_t.pure", "rmtgt_m.pure", "acc.pure", "retry_t.pure", "retry_m.pure", "identity.pure",
+                "assoc_x.pure", "assoc_y.pure", "assoc_z.pure", "assoc_r.pure"})
         {
             if (runtime.getSourceById(id) != null)
             {
@@ -364,6 +365,75 @@ public class TestIncrementalStackGraph extends AbstractPureTestWithCoreCompiled
         MutableSet<CoreInstance> invalidated = baseline.computeInvalidation(Sets.mutable.with("identity.pure"));
         Assert.assertTrue("the recreated element must be invalidated (a seed via current elementsByFile)",
                 invalidated.contains(recreated));
+        baseline.consumeChangedFiles();
+    }
+
+    @Test
+    public void testAssociationDeleteInvalidatesContributedToClassesEvenAfterPriorUnrelatedFileTouch()
+    {
+        // Task 11 Part A regression, distilled from the scripted-edit corpus finding: an Association
+        // structurally contributes properties onto the classes named by its own two declared property
+        // types (M3's own association processing — see StackGraphBuilder#addAssociationContribution) even
+        // though neither contributed-to class's own declared code ever names the association. Before the
+        // fix, computeInvalidation had no edge capturing this at all, so an association edit never
+        // invalidated the classes it attaches properties to — a real SHADOW_MISSING. That gap was
+        // initially masked on a shadow's very first post-buildFull cycle only (by buildFull's own then-
+        // unconsumed everything-changed pending set, fixed alongside this one), which is why it only ever
+        // surfaced once at least one prior, unrelated, already-consumed touched cycle had run first —
+        // reproduced here exactly that way: touch X (one of the two association-contributed-to classes)
+        // first and consume that cycle, THEN edit the association alone and confirm X, Y (both
+        // contributed-to), and Z (Y's own dependent, reachable only transitively) are all still found.
+        compileTestSource("assoc_x.pure", "Class spikepkg::inc::StackGraphSpikeIncAssocX {}\n");
+        compileTestSource("assoc_y.pure", "Class spikepkg::inc::StackGraphSpikeIncAssocY {}\n");
+        compileTestSource("assoc_z.pure",
+                "Class spikepkg::inc::StackGraphSpikeIncAssocZ\n{\n   p : spikepkg::inc::StackGraphSpikeIncAssocY[1];\n}\n");
+        compileTestSource("assoc_r.pure",
+                "Association spikepkg::inc::StackGraphSpikeIncAssocR\n{\n"
+                        + "   toX : spikepkg::inc::StackGraphSpikeIncAssocX[1];\n"
+                        + "   toY : spikepkg::inc::StackGraphSpikeIncAssocY[1];\n}\n");
+        baseline.applySourceChanges(runtime.getSourceRegistry());
+        baseline.consumeChangedFiles();
+
+        CoreInstance zElement = processorSupport.package_getByUserPath("spikepkg::inc::StackGraphSpikeIncAssocZ");
+        CoreInstance yElement = processorSupport.package_getByUserPath("spikepkg::inc::StackGraphSpikeIncAssocY");
+        Assert.assertNotNull(zElement);
+        Assert.assertNotNull(yElement);
+
+        // Step 1: touch a DIFFERENT, unrelated file first (an edit to X itself) — an ordinary cycle,
+        // consumed before the actual regression scenario, matching the corpus finding's exact shape.
+        runtime.modify("assoc_x.pure", "Class spikepkg::inc::StackGraphSpikeIncAssocX { extra : String[1]; }\n");
+        runtime.compile();
+        baseline.applySourceChanges(runtime.getSourceRegistry());
+        baseline.consumeChangedFiles();
+
+        CoreInstance xElementAfterTouch = processorSupport.package_getByUserPath("spikepkg::inc::StackGraphSpikeIncAssocX");
+        Assert.assertNotNull(xElementAfterTouch);
+
+        // Step 2: the actual regression — simulate the association's own file being removed (same
+        // established technique as testRemovedTargetInvalidatesUntouchedDependentViaForcedInvalidation: a
+        // SourceRegistry view hiding assoc_r.pure, so the shadow's own bookkeeping sees a removal without
+        // needing to make the real runtime uncompilable).
+        SourceRegistry live = runtime.getSourceRegistry();
+        SourceRegistry withoutAssoc = new SourceRegistry(live.getCodeStorage(), null)
+        {
+            @Override
+            public RichIterable<Source> getSources()
+            {
+                return live.getSources().reject(source -> "assoc_r.pure".equals(source.getId()));
+            }
+        };
+        baseline.applySourceChanges(withoutAssoc);
+        Assert.assertEquals(Sets.mutable.with("assoc_r.pure"), baseline.getLastChangedFiles());
+
+        MutableSet<CoreInstance> invalidated = baseline.computeInvalidation(Sets.mutable.with("assoc_r.pure"));
+        Assert.assertTrue("X (one of the association's two contributed-to classes) must be invalidated",
+                invalidated.contains(xElementAfterTouch));
+        Assert.assertTrue("Y (the other contributed-to class) must be invalidated", invalidated.contains(yElement));
+        Assert.assertTrue("Z (Y's own dependent) must be invalidated transitively via Y",
+                invalidated.contains(zElement));
+
+        baseline.consumeChangedFiles();
+        baseline.applySourceChanges(live); // restore for @After's cleanup to find a consistent state
         baseline.consumeChangedFiles();
     }
 }
