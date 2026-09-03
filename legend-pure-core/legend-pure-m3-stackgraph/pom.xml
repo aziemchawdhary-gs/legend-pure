@@ -67,7 +67,6 @@
             <artifactId>junit</artifactId>
             <scope>test</scope>
         </dependency>
-
         <!-- Task 10: DSL/store incremental corpus (shadow-corpus profile only). Main jars are needed at
              test-runtime only (nothing in this module's own main sources references DSL classes; the
              corpus's ShadowAttachingRunListener attaches purely reflectively) so all four are test-scoped;
@@ -420,6 +419,44 @@
                                     <includes>
                                         <include>**/incremental/**/Test*.java</include>
                                     </includes>
+                                    <!-- Task 10 post-review correction: ALL 18 of this module's incremental
+                                         test classes are excluded here. Every one extends
+                                         AbstractPureRelationalTestWithCoreCompiled, whose @Before/@After
+                                         (per-method) lifecycle means the static `runtime` field is null at
+                                         the moment JUnit's testStarted fires (always before @Before), so
+                                         ShadowAttachingRunListener never attaches a shadow to any of them —
+                                         this execution's tests genuinely ran, but carried zero shadow
+                                         observation. This is a harness-limitation exclusion, NOT an
+                                         unmodeled-refkind one — see shadow-corpus-exclusions.tsv's
+                                         harness-limitation:per-method-runtime-lifecycle block for the full
+                                         explanation and why mid-test attachment was ruled out. This
+                                         execution is kept (matching the path execution's zero-classes-run
+                                         precedent above) rather than dropped, so the module stays wired for
+                                         if/when a harness or base-class change reopens it. Real relational
+                                         shadow signal is instead recovered via
+                                         org.finos.legend.pure.m3.stackgraph.invalidation.
+                                         TestRelationalShadowScenarios (own suite, manual attach, no
+                                         listener) — see the Task 10 report. -->
+                                    <excludes>
+                                        <exclude>**/TestDatabase.java</exclude>
+                                        <exclude>**/TestIncludedMappingOwnerUnloaderUnbind.java</exclude>
+                                        <exclude>**/relational/incremental/TestMapping.java</exclude>
+                                        <exclude>**/TestMappingUnbindWithStoreSubstitution.java</exclude>
+                                        <exclude>**/TestMilestoningPropertyMappingStability.java</exclude>
+                                        <exclude>**/relational/incremental/TestPureRuntimeAggregationAwareMapping.java</exclude>
+                                        <exclude>**/TestPureRuntimeAssociationMapping.java</exclude>
+                                        <exclude>**/TestPureRuntimeClassMapping.java</exclude>
+                                        <exclude>**/relational/incremental/TestPureRuntimeEnumerationMapping.java</exclude>
+                                        <exclude>**/TestPureRuntimeExtendMapping.java</exclude>
+                                        <exclude>**/TestPureRuntimeInlineEmbeddedMapping.java</exclude>
+                                        <exclude>**/relational/incremental/TestPureRuntimeMapping.java</exclude>
+                                        <exclude>**/TestPureRuntimeMappingStoreSubstitution.java</exclude>
+                                        <exclude>**/relational/incremental/TestPureRuntimeModelJoinMapping.java</exclude>
+                                        <exclude>**/TestPureRuntimeOtherwiseEmbeddedMapping.java</exclude>
+                                        <exclude>**/relational/incremental/TestPureRuntimeXStoreMapping.java</exclude>
+                                        <exclude>**/TestRelationDatabaseAccessor.java</exclude>
+                                        <exclude>**/TestView.java</exclude>
+                                    </excludes>
                                     <properties>
                                         <property>
                                             <name>listener</name>

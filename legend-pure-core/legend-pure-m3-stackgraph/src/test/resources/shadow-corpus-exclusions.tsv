@@ -1,11 +1,20 @@
 # Shadow corpus exclusions — stack-graphs Phase 1 shadow invalidation, Task 9 Round 2 (Cause 3).
 #
 # Columns (tab-separated): test-class FQN, cause tag, one-line justification, disposition.
-# Cause tag is one of the unmodeled-refkind:* sub-categories StackGraphBuilder's Phase 1 scope
-# (ImportStub/PropertyStub/EnumStub + Package references only — see its own top-of-file javadoc) does
-# not cover; disposition is always "phase2-model" here (expected to close once a later phase adds the
-# missing model support — same disposition as the checked-in divergence-allowlist.tsv's grammar-info-stub
-# row, which is the same class of gap for a different construct).
+#
+# Cause tag is one of TWO clearly-distinct families — never conflate them, a harness limitation
+# must never masquerade as construct coverage (or vice versa):
+#   - unmodeled-refkind:* — one of the sub-categories StackGraphBuilder's Phase 1 scope
+#     (ImportStub/PropertyStub/EnumStub + Package references only — see its own top-of-file
+#     javadoc) does not cover. Disposition "phase2-model" (expected to close once a later phase
+#     adds the missing model support — same disposition as the checked-in
+#     divergence-allowlist.tsv's grammar-info-stub row, which is the same class of gap for a
+#     different construct).
+#   - harness-limitation:* — the shadow-corpus HARNESS (listener attachment, not
+#     StackGraphBuilder) cannot observe these classes at all; see the
+#     harness-limitation:per-method-runtime-lifecycle block below for the one instance found so
+#     far. Disposition "harness-limitation" (closes only if the harness or the excluded test
+#     classes' own lifecycle changes — never via model support, so never "phase2-model").
 #
 # Source of truth: this file. legend-pure-m3-stackgraph/pom.xml's shadow-corpus profile mirrors this
 # exact class list in its surefire <excludes> (surefire cannot read excludes from an arbitrary resource
@@ -36,3 +45,52 @@ org.finos.legend.pure.m3.tests.incremental.treepath.TestPureRuntimeTreePath	unmo
 org.finos.legend.pure.m2.dsl.mapping.test.incremental.TestPureRuntimeAggregationAwareMapping	unmodeled-refkind:function-application	testDeleteFunctionUsedInAggregationAwareMapping's aggregation-aware transform calls a function ($this.salesDate->myFunction()); the FunctionExpression call edge is never modeled as a stub, same gap as m3-core function calls	phase2-model
 org.finos.legend.pure.m2.dsl.mapping.test.incremental.TestPureModelMapping	unmodeled-refkind:mapping-property-transform	testPropertyMappingValueSpecificationContext's PropertyMapping transform ($src.bc.c) is a FunctionExpression/PropertyStub chain inside a Mapping's property-mapping transform that StackGraphBuilder never scans; here the chain also crosses an association-derived property (bc), compounding the gap	phase2-model
 org.finos.legend.pure.m2.inlinedsl.path.incremental.TestPureRuntimePath	unmodeled-refkind:path-route-node	testPathUnbindStabilityForMilestonedQualifiedProperties's Path DSL literal (#/A/b/bAttr#) inside a function body resolves route-node property segments via a distinct grammar mechanism StackGraphBuilder never scans; here the chain also crosses an association-derived property (b) on a milestoned class, compounding the gap	phase2-model
+
+# --- harness-limitation:per-method-runtime-lifecycle (Task 10, post-review correction) ---
+#
+# NOT an unmodeled-refkind row: this is not a StackGraphBuilder Phase 1 scope gap, it is a
+# listener-attachment blind spot in the corpus HARNESS itself. Every one of the 18 rows below
+# extends AbstractPureRelationalTestWithCoreCompiled, whose lifecycle is @Before _setUp() {
+# setUpRuntime(); } / @After _tearDown() { tearDownRuntime(); } — PER METHOD, not the
+# @BeforeClass/@AfterClass pattern every other scanned base class (m3-core's own incremental
+# tests, mapping's AbstractPureMappingTestWithCoreCompiled callers, graph's and path's test
+# classes) uses. JUnit fires a RunListener's testStarted callback BEFORE @Before runs for that
+# method, so ShadowAttachingRunListener#readRuntime always observes the static `runtime` field
+# as null for these 18 classes (either never yet assigned, or just nulled by the PREVIOUS
+# method's tearDownRuntime()) — switchTo() never fires, no shadow ever attaches, and every
+# compile cycle in these classes' original corpus run executed with zero shadow observation.
+# The Task 10 report's original "120/120 green, zero exclusions" claim for this module was
+# vacuous and has been corrected.
+#
+# Mid-test attachment (attach once a live runtime happens to appear, rather than only at
+# testStarted) was considered and ruled out: it would race the single-threaded compiler —
+# StackGraphInvalidationShadow's constructor does its own full second-graph build, which could
+# overlap a compile already in flight, and IncrementalCompiler's CompilerEventHandler list is
+# not thread-safe against a handler added from outside the compile call stack.
+#
+# Real relational shadow signal is instead recovered via
+# org.finos.legend.pure.m3.stackgraph.invalidation.TestRelationalShadowScenarios (manual
+# attach/detach per TestInvalidationShadow's pattern, @BeforeClass lifecycle, no listener) — see
+# the Task 10 report's corrected relational section for that class's 3 scenario outcomes.
+#
+# Disposition is "harness-limitation", never "phase2-model": no model support closes this gap;
+# only a harness change (per-method attach, or migrating these 18 classes' base off per-method
+# lifecycle — neither in Task 10's scope) would.
+org.finos.legend.pure.m2.relational.incremental.TestDatabase	harness-limitation:per-method-runtime-lifecycle	AbstractPureRelationalTestWithCoreCompiled's per-method @Before/@After lifecycle means the static runtime field is null at testStarted; ShadowAttachingRunListener never attaches	harness-limitation
+org.finos.legend.pure.m2.relational.incremental.TestIncludedMappingOwnerUnloaderUnbind	harness-limitation:per-method-runtime-lifecycle	Same per-method lifecycle gap as TestDatabase	harness-limitation
+org.finos.legend.pure.m2.relational.incremental.TestMapping	harness-limitation:per-method-runtime-lifecycle	Same per-method lifecycle gap as TestDatabase	harness-limitation
+org.finos.legend.pure.m2.relational.incremental.TestMappingUnbindWithStoreSubstitution	harness-limitation:per-method-runtime-lifecycle	Same per-method lifecycle gap as TestDatabase	harness-limitation
+org.finos.legend.pure.m2.relational.incremental.TestMilestoningPropertyMappingStability	harness-limitation:per-method-runtime-lifecycle	Same per-method lifecycle gap as TestDatabase	harness-limitation
+org.finos.legend.pure.m2.relational.incremental.TestPureRuntimeAggregationAwareMapping	harness-limitation:per-method-runtime-lifecycle	Same per-method lifecycle gap as TestDatabase	harness-limitation
+org.finos.legend.pure.m2.relational.incremental.TestPureRuntimeAssociationMapping	harness-limitation:per-method-runtime-lifecycle	Same per-method lifecycle gap as TestDatabase	harness-limitation
+org.finos.legend.pure.m2.relational.incremental.TestPureRuntimeClassMapping	harness-limitation:per-method-runtime-lifecycle	Same per-method lifecycle gap as TestDatabase	harness-limitation
+org.finos.legend.pure.m2.relational.incremental.TestPureRuntimeEnumerationMapping	harness-limitation:per-method-runtime-lifecycle	Same per-method lifecycle gap as TestDatabase	harness-limitation
+org.finos.legend.pure.m2.relational.incremental.TestPureRuntimeExtendMapping	harness-limitation:per-method-runtime-lifecycle	Same per-method lifecycle gap as TestDatabase	harness-limitation
+org.finos.legend.pure.m2.relational.incremental.TestPureRuntimeInlineEmbeddedMapping	harness-limitation:per-method-runtime-lifecycle	Same per-method lifecycle gap as TestDatabase	harness-limitation
+org.finos.legend.pure.m2.relational.incremental.TestPureRuntimeMapping	harness-limitation:per-method-runtime-lifecycle	Same per-method lifecycle gap as TestDatabase	harness-limitation
+org.finos.legend.pure.m2.relational.incremental.TestPureRuntimeMappingStoreSubstitution	harness-limitation:per-method-runtime-lifecycle	Same per-method lifecycle gap as TestDatabase	harness-limitation
+org.finos.legend.pure.m2.relational.incremental.TestPureRuntimeModelJoinMapping	harness-limitation:per-method-runtime-lifecycle	Same per-method lifecycle gap as TestDatabase	harness-limitation
+org.finos.legend.pure.m2.relational.incremental.TestPureRuntimeOtherwiseEmbeddedMapping	harness-limitation:per-method-runtime-lifecycle	Same per-method lifecycle gap as TestDatabase	harness-limitation
+org.finos.legend.pure.m2.relational.incremental.TestPureRuntimeXStoreMapping	harness-limitation:per-method-runtime-lifecycle	Same per-method lifecycle gap as TestDatabase	harness-limitation
+org.finos.legend.pure.m2.relational.incremental.TestRelationDatabaseAccessor	harness-limitation:per-method-runtime-lifecycle	Same per-method lifecycle gap as TestDatabase	harness-limitation
+org.finos.legend.pure.m2.relational.incremental.TestView	harness-limitation:per-method-runtime-lifecycle	Same per-method lifecycle gap as TestDatabase	harness-limitation
