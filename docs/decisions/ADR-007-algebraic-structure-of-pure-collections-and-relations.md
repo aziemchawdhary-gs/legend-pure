@@ -345,7 +345,7 @@ r->rename(~a, ~b)->filter(p) = r->filter(p[b:=a])->rename(~a, ~b)
 r->filter(p)->filter(q)      = r->filter(x | p(x) && q(x))
 r->extend(f)->extend(g)      = r->extend([f, g])               when cols(g) ⊆ T, so g does not read the column f adds
 r->select(~Y)->select(~Z)    = r->select(~Z)                   when Z ⊆ Y
-r->join(s, k, c)->filter(p)  = r->filter(p)->join(s, k, c)     when cols(p) ⊆ T and k is INNER or LEFT_OUTER
+r->join(s, k, c)->filter(p)  = r->filter(p)->join(s, k, c)     when cols(p) ⊆ T and k is INNER or LEFT
 r->groupBy(~Z, agg)->filter(p)
                              = r->filter(p)->groupBy(~Z, agg)   when cols(p) ⊆ Z          // WHERE on keys
                              = HAVING p                         when cols(p) meets R      // HAVING on aggregates
@@ -409,7 +409,7 @@ The indicator `[φ]` is `1` when `φ` holds and `0` otherwise. `Σ` is finite su
 ### B.2 Core operators
 
 Each operator takes `K`-relations to a `K`-relation of the type the signature states. `p`, `f`,
-`θ` are the scalar functions supplied as lambdas, and `JoinKind` is `INNER` or `LEFT_OUTER`.
+`θ` are the scalar functions supplied as lambdas, and `JoinKind` is `INNER` or `LEFT`.
 
 ```
 [[filter(R, p)]](t)                = R(t) · [p(t)]
@@ -422,7 +422,7 @@ Each operator takes `K`-relations to a `K`-relation of the type the signature st
 
 [[join(R, S, INNER, θ)]](t ⊕ s)    = R(t) · S(s) · [θ(t, s)]
 
-[[join(R, S, LEFT_OUTER, θ)]](u)   = [[join(R, S, INNER, θ)]](u)
+[[join(R, S, LEFT, θ)]](u)   = [[join(R, S, INNER, θ)]](u)
                                    + [u|V = ε_V] · R(u|T) · [ Σ_s S(s) · [θ(u|T, s)] = 0 ]
 
 [[lateral(R, g)]](t ⊕ v)           = R(t) · [[g(t)]](v)                               // g : T → Relation<V>
